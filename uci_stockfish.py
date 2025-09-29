@@ -2,14 +2,17 @@ import sys
 import os
 import chess
 import chess.engine
+from settings import StockfishSettings
 
 # === CONFIGURATION ===
 ENGINE_PATH = r"C:\Users\romai\Documents\1._Romain\2_Esiea\4A\PST\dist\stockfish.exe"
-SEARCH_TIME = 0.5  # Réduit à 0.5s pour éviter les timeouts
 OUTPUT_FILE = "bestmove.txt"
 
 
 def main():
+    # Charger les paramètres depuis le fichier de configuration
+    settings = StockfishSettings()
+    
     # Vérif du binaire
     if not os.path.isfile(ENGINE_PATH):
         print(f"[ERREUR] Stockfish introuvable à : {ENGINE_PATH}")
@@ -17,13 +20,16 @@ def main():
 
     engine = None
     try:
-        # Configuration plus conservatrice pour éviter les crashes
+        # Lancer Stockfish
         engine = chess.engine.SimpleEngine.popen_uci(ENGINE_PATH)
-        engine.configure({
-            "Threads": 1,        # Réduit de 4 à 1 thread
-            "Hash": 64,          # Réduit de 512 à 64 MB
-            "Skill Level": 15    # Niveau de jeu (1-20, 20 = maximum)
-        })
+        
+        # Appliquer la configuration depuis les paramètres
+        engine_config = settings.get_engine_config()
+        print(f"Configuration Stockfish : {engine_config}")
+        print(f"ELO approximatif : {settings.get_elo()}")
+        
+        engine.configure(engine_config)
+        
     except Exception as e:
         print(f"[ERREUR] Impossible de lancer Stockfish : {e}")
         if engine:
@@ -53,8 +59,21 @@ def main():
         board = chess.Board()
 
     try:
-        # Demande à Stockfish le meilleur coup avec timeout plus court
-        result = engine.play(board, chess.engine.Limit(time=SEARCH_TIME))
+        # Obtenir les limites de recherche depuis les paramètres
+        search_limits = settings.get_search_limit()
+        print(f"Limites de recherche : {search_limits}")
+        
+        # Créer l'objet Limit
+        limit_kwargs = {}
+        if "time" in search_limits:
+            limit_kwargs["time"] = search_limits["time"]
+        if "depth" in search_limits:
+            limit_kwargs["depth"] = search_limits["depth"]
+        
+        limit = chess.engine.Limit(**limit_kwargs)
+        
+        # Demander le meilleur coup
+        result = engine.play(board, limit)
         
         if result.move is None:
             print("[ERREUR] Stockfish n'a pas trouvé de coup")

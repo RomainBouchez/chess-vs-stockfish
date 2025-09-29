@@ -1,0 +1,13 @@
+{
+    "skill_level": 14,
+    "threads": 1,
+    "hash": 64,
+    "time_limit": 0.5,
+    "depth_limit": 0,
+    "move_overhead": 10,
+    "contempt": 0,
+    "min_think_time": 0,
+    "slow_mover": 100,
+    "multipv": 1,
+    "ponder": true
+}

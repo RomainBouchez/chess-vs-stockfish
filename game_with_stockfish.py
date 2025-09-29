@@ -2,8 +2,10 @@ import os
 import pygame
 from pygame.locals import *
 from piece import Piece
-from chess_with_validation import Chess  # Import de la classe Chess avec validation
+from chess_with_validation import Chess
 from utils import Utils
+from settings_menu import SettingsMenu
+from settings import StockfishSettings
 
 class Game:
     def __init__(self):
@@ -16,6 +18,9 @@ class Game:
         self.running = True
         # base folder for program resources
         self.resources = "res"
+        
+        # Paramètres Stockfish
+        self.stockfish_settings = StockfishSettings()
  
         # initialize game window
         pygame.display.init()
@@ -125,10 +130,14 @@ class Game:
         self.screen.fill(bg_color)
         # black color
         black_color = (0, 0, 0)
-        # coordinates for "Play" button
-        start_btn = pygame.Rect(270, 300, 100, 50)
-        # show play button
+        
+        # Boutons du menu
+        start_btn = pygame.Rect(220, 280, 200, 50)
+        settings_btn = pygame.Rect(220, 350, 200, 50)
+        
+        # Dessiner les boutons
         pygame.draw.rect(self.screen, black_color, start_btn)
+        pygame.draw.rect(self.screen, (50, 100, 200), settings_btn)
 
         # white color
         white_color = (255, 255, 255)
@@ -136,29 +145,47 @@ class Game:
         big_font = pygame.font.SysFont("comicsansms", 50)
         medium_font = pygame.font.SysFont("comicsansms", 30)
         small_font = pygame.font.SysFont("comicsansms", 20)
+        tiny_font = pygame.font.SysFont("comicsansms", 16)
         
         # create text to be shown on the game menu
         welcome_text = big_font.render("Chess vs Stockfish", False, black_color)
         subtitle_text = medium_font.render("You play White", False, black_color)
+        
+        # Afficher l'ELO actuel
+        current_elo = self.stockfish_settings.get_elo()
+        elo_text = tiny_font.render(f"Niveau Stockfish: {current_elo} ELO", True, (100, 100, 100))
+        
         created_by = small_font.render("Human vs AI", True, black_color)
         start_btn_label = small_font.render("Play", True, white_color)
+        settings_btn_label = small_font.render("Settings", True, white_color)
         
         # show welcome text
         self.screen.blit(welcome_text, 
                       ((self.screen.get_width() - welcome_text.get_width()) // 2, 
-                      120))
+                      100))
         # show subtitle text
         self.screen.blit(subtitle_text, 
                       ((self.screen.get_width() - subtitle_text.get_width()) // 2, 
-                      180))
+                      160))
+        
+        # Afficher ELO
+        self.screen.blit(elo_text, 
+                      ((self.screen.get_width() - elo_text.get_width()) // 2, 
+                      220))
+        
         # show credit text
         self.screen.blit(created_by, 
                       ((self.screen.get_width() - created_by.get_width()) // 2, 
                       self.screen.get_height() - created_by.get_height() - 100))
-        # show text on the Play button
+        
+        # show text on buttons
         self.screen.blit(start_btn_label, 
                       ((start_btn.x + (start_btn.width - start_btn_label.get_width()) // 2, 
                       start_btn.y + (start_btn.height - start_btn_label.get_height()) // 2)))
+        
+        self.screen.blit(settings_btn_label, 
+                      ((settings_btn.x + (settings_btn.width - settings_btn_label.get_width()) // 2, 
+                      settings_btn.y + (settings_btn.height - settings_btn_label.get_height()) // 2)))
 
         # get pressed keys
         key_pressed = pygame.key.get_pressed()
@@ -174,9 +201,23 @@ class Game:
             if start_btn.collidepoint(mouse_coords[0], mouse_coords[1]):
                 # change button behavior as it is hovered
                 pygame.draw.rect(self.screen, white_color, start_btn, 3)
-                
                 # change menu flag
                 self.menu_showed = True
+                
+            # check if "Settings" button was clicked
+            elif settings_btn.collidepoint(mouse_coords[0], mouse_coords[1]):
+                # Ouvrir le menu de paramètres
+                settings_menu = SettingsMenu(self.screen)
+                result = settings_menu.run()
+                
+                # Recharger les paramètres après fermeture du menu
+                if result == "save":
+                    self.stockfish_settings.load_settings()
+                    print("Nouveaux paramètres Stockfish :")
+                    print(f"  - ELO: {self.stockfish_settings.get_elo()}")
+                    print(f"  - Skill Level: {self.stockfish_settings.settings['skill_level']}")
+                    print(f"  - Temps: {self.stockfish_settings.settings['time_limit']}s")
+                
             # check if enter or return key was pressed
             elif key_pressed[K_RETURN]:
                 self.menu_showed = True
@@ -214,9 +255,12 @@ class Game:
         # black color
         black_color = (0, 0, 0)
         # coordinates for play again button
-        reset_btn = pygame.Rect(250, 300, 140, 50)
-        # show reset button
+        reset_btn = pygame.Rect(180, 300, 140, 50)
+        menu_btn = pygame.Rect(330, 300, 140, 50)
+        
+        # show buttons
         pygame.draw.rect(self.screen, black_color, reset_btn)
+        pygame.draw.rect(self.screen, (50, 100, 200), menu_btn)
 
         # white color
         white_color = (255, 255, 255)
@@ -232,19 +276,25 @@ class Game:
             
         winner_text = big_font.render(text, False, black_color)
 
-        # create text to be shown on the reset button
+        # create text to be shown on buttons
         reset_label = "Play Again"
+        menu_label = "Menu"
         reset_btn_label = small_font.render(reset_label, True, white_color)
+        menu_btn_label = small_font.render(menu_label, True, white_color)
 
         # show winner text
         self.screen.blit(winner_text, 
                       ((self.screen.get_width() - winner_text.get_width()) // 2, 
                       150))
         
-        # show text on the reset button
+        # show text on buttons
         self.screen.blit(reset_btn_label, 
                       ((reset_btn.x + (reset_btn.width - reset_btn_label.get_width()) // 2, 
                       reset_btn.y + (reset_btn.height - reset_btn_label.get_height()) // 2)))
+        
+        self.screen.blit(menu_btn_label, 
+                      ((menu_btn.x + (menu_btn.width - menu_btn_label.get_width()) // 2, 
+                      menu_btn.y + (menu_btn.height - menu_btn_label.get_height()) // 2)))
 
         # get pressed keys
         key_pressed = pygame.key.get_pressed()
@@ -261,12 +311,24 @@ class Game:
                 # change button behavior as it is hovered
                 pygame.draw.rect(self.screen, white_color, reset_btn, 3)
                 
+                # reset game
+                self.chess.reset()
+                # clear winner
+                self.chess.winner = ""
+                
+            # check if menu button was clicked
+            elif menu_btn.collidepoint(mouse_coords[0], mouse_coords[1]):
                 # change menu flag
                 self.menu_showed = False
+                # reset game
+                self.chess.reset()
+                # clear winner
+                self.chess.winner = ""
+                
             # check if enter or return key was pressed
             elif key_pressed[K_RETURN]:
                 self.menu_showed = False
-            # reset game
-            self.chess.reset()
-            # clear winner
-            self.chess.winner = ""
+                # reset game
+                self.chess.reset()
+                # clear winner
+                self.chess.winner = ""
