@@ -1,0 +1,5 @@
+- Implemented a new script uci_stockfish.py to interact with the Stockfish chess engine using UCI protocol.
+- Configured the engine with conservative settings to prevent crashes and timeouts.
+- Added functionality to read a FEN string from command line arguments and validate the chess position.
+- Output the best move to a file named estmove.txt.
+- Created a new utility module utils.py with functions to handle mouse events in a Pygame context.
