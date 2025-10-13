@@ -39,6 +39,21 @@ class Chess(object):
         # Board de validation avec python-chess
         self.validation_board = chess.Board()
 
+        # Variables pour gérer les mouvements spéciaux
+        self.last_move = None  # Pour la prise en passant
+        self.castling_rights = {
+            'white_king_moved': False,
+            'black_king_moved': False,
+            'white_rook_a_moved': False,
+            'white_rook_h_moved': False,
+            'black_rook_a_moved': False,
+            'black_rook_h_moved': False
+        }
+
+        # Pour la promotion du pion
+        self.promotion_pending = False
+        self.promotion_square = None
+
         # mapping of piece names to index of list containing piece coordinates on spritesheet
         self.pieces = {
             "white_pawn":   5,
@@ -84,9 +99,22 @@ class Chess(object):
         self.moves = []
         self.stockfish_thinking = False
         self.stockfish_failures = 0
-        
+
         # Réinitialiser le board de validation
         self.validation_board = chess.Board()
+
+        # Réinitialiser les droits de roque et autres variables
+        self.last_move = None
+        self.castling_rights = {
+            'white_king_moved': False,
+            'black_king_moved': False,
+            'white_rook_a_moved': False,
+            'white_rook_h_moved': False,
+            'black_rook_a_moved': False,
+            'black_rook_h_moved': False
+        }
+        self.promotion_pending = False
+        self.promotion_square = None
 
         # Le joueur humain joue toujours les blancs (commence)
         self.turn["black"] = 0
@@ -226,7 +254,17 @@ class Chess(object):
             if not self.sync_validation_board():
                 print("Erreur: Impossible de synchroniser le board de validation")
                 return False
-            
+
+            # Vérifier si c'est une promotion de pion
+            is_promotion = False
+            if piece_name in ["white_pawn", "black_pawn"]:
+                # Un pion blanc atteint la 8e rangée ou un pion noir atteint la 1ère rangée
+                if (piece_name == "white_pawn" and to_rank == 8) or (piece_name == "black_pawn" and to_rank == 1):
+                    is_promotion = True
+                    # Par défaut, promouvoir en dame (on pourrait ajouter une interface pour choisir)
+                    move_uci = move_uci + 'q'
+                    print(f"Promotion détectée! Le pion est promu en dame.")
+
             # Vérifier que le coup est légal avec python-chess
             try:
                 move = chess.Move.from_uci(move_uci)
@@ -236,23 +274,40 @@ class Chess(object):
             except Exception as e:
                 print(f"Erreur dans le format du coup humain: {move_uci} - {e}")
                 return False
-            
+
             # Le coup est légal, on peut l'appliquer
-            
+
             # 1. Appliquer sur le board de validation
             self.validation_board.push(move)
-            
+
             # 2. Appliquer sur la représentation interne
             target_piece = self.piece_location[to_file][to_rank][0]
-            
+
             # Gérer les captures (pour l'affichage seulement)
             if target_piece != "":
                 self.captured.append(self.piece_location[to_file][to_rank].copy())
-            
-            # Déplacer la pièce
-            self.piece_location[to_file][to_rank][0] = piece_name
-            self.piece_location[from_file][from_rank][0] = ""
-            
+
+            # Gérer les coups spéciaux
+            if self.validation_board.is_castling(move):
+                # Roque
+                self.apply_castling_move(from_file, from_rank, to_file, to_rank, piece_name)
+            elif is_promotion:
+                # Promotion du pion
+                self.apply_pawn_promotion(from_file, from_rank, to_file, to_rank, piece_name, move_uci[-1])
+            elif self.validation_board.is_en_passant(move):
+                # Prise en passant
+                self.apply_en_passant(from_file, from_rank, to_file, to_rank, piece_name)
+            else:
+                # Coup normal
+                self.piece_location[to_file][to_rank][0] = piece_name
+                self.piece_location[from_file][from_rank][0] = ""
+
+            # Mettre à jour le dernier coup
+            self.last_move = move_uci
+
+            # Mettre à jour les droits de roque
+            self.update_castling_rights(piece_name, from_file, from_rank)
+
             # 3. Changer de tour
             if self.turn["white"]:
                 self.turn["white"] = 0
@@ -260,12 +315,12 @@ class Chess(object):
             else:
                 self.turn["black"] = 0
                 self.turn["white"] = 1
-            
+
             # 4. Vérifier l'état du jeu après le coup
             self.check_game_status()
-            
+
             return True
-            
+
         except Exception as e:
             print(f"Erreur lors de la validation du coup humain: {e}")
             return False
@@ -350,11 +405,31 @@ class Chess(object):
         if target_piece != "":
             # Ajouter la pièce capturée à la liste pour l'affichage
             self.captured.append(self.piece_location[to_file][to_rank].copy())
-        
-        # Effectuer le déplacement
-        self.piece_location[to_file][to_rank][0] = source_piece
-        self.piece_location[from_file][from_rank][0] = ""
-        
+
+        # Gérer les coups spéciaux en utilisant python-chess
+        move_obj = chess.Move.from_uci(move_uci)
+
+        # 1. Gérer le roque
+        if self.validation_board.is_castling(move_obj):
+            self.apply_castling_move(from_file, from_rank, to_file, to_rank, source_piece)
+        # 2. Gérer la promotion du pion
+        elif len(move_uci) == 5 and move_uci[4] in 'qrbn':
+            promotion_piece = move_uci[4]
+            self.apply_pawn_promotion(from_file, from_rank, to_file, to_rank, source_piece, promotion_piece)
+        # 3. Gérer la prise en passant
+        elif self.validation_board.is_en_passant(move_obj):
+            self.apply_en_passant(from_file, from_rank, to_file, to_rank, source_piece)
+        # 4. Coup normal
+        else:
+            self.piece_location[to_file][to_rank][0] = source_piece
+            self.piece_location[from_file][from_rank][0] = ""
+
+        # Mettre à jour le dernier coup
+        self.last_move = move_uci
+
+        # Mettre à jour les droits de roque
+        self.update_castling_rights(source_piece, from_file, from_rank)
+
         # Changer de tour
         if self.turn["black"]:
             self.turn["black"] = 0
@@ -362,12 +437,90 @@ class Chess(object):
         else:
             self.turn["black"] = 1
             self.turn["white"] = 0
-        
+
         # Vérifier l'état du jeu après le coup
         self.check_game_status()
-        
+
         print(f"Coup appliqué: {move_uci} ({source_piece} de {from_square} vers {to_square})")
         return True
+
+    def apply_castling_move(self, from_file, from_rank, to_file, to_rank, king_piece):
+        """Applique un roque en déplaçant le roi et la tour"""
+        print(f"Roque détecté: {from_file}{from_rank} -> {to_file}{to_rank}")
+
+        # Déplacer le roi
+        self.piece_location[to_file][to_rank][0] = king_piece
+        self.piece_location[from_file][from_rank][0] = ""
+
+        # Déterminer quelle tour déplacer
+        if to_file == 'g':  # Petit roque (kingside)
+            # La tour passe de h à f
+            rook_piece = self.piece_location['h'][to_rank][0]
+            self.piece_location['f'][to_rank][0] = rook_piece
+            self.piece_location['h'][to_rank][0] = ""
+            print("Petit roque (kingside) appliqué")
+        elif to_file == 'c':  # Grand roque (queenside)
+            # La tour passe de a à d
+            rook_piece = self.piece_location['a'][to_rank][0]
+            self.piece_location['d'][to_rank][0] = rook_piece
+            self.piece_location['a'][to_rank][0] = ""
+            print("Grand roque (queenside) appliqué")
+
+    def apply_pawn_promotion(self, from_file, from_rank, to_file, to_rank, pawn_piece, promotion_piece):
+        """Applique une promotion de pion"""
+        color = "white" if pawn_piece.startswith("white") else "black"
+
+        # Conversion de la notation UCI vers le nom de pièce
+        piece_map = {
+            'q': f"{color}_queen",
+            'r': f"{color}_rook",
+            'b': f"{color}_bishop",
+            'n': f"{color}_knight"
+        }
+
+        promoted_piece = piece_map.get(promotion_piece, f"{color}_queen")
+
+        print(f"Promotion du pion en {promoted_piece}")
+
+        # Remplacer le pion par la pièce promue
+        self.piece_location[to_file][to_rank][0] = promoted_piece
+        self.piece_location[from_file][from_rank][0] = ""
+
+    def apply_en_passant(self, from_file, from_rank, to_file, to_rank, pawn_piece):
+        """Applique une prise en passant"""
+        print(f"Prise en passant: {from_file}{from_rank} -> {to_file}{to_rank}")
+
+        # Déplacer le pion attaquant
+        self.piece_location[to_file][to_rank][0] = pawn_piece
+        self.piece_location[from_file][from_rank][0] = ""
+
+        # Retirer le pion capturé (qui est sur la même rangée que le pion attaquant)
+        captured_pawn_rank = from_rank  # Le pion capturé est sur la même rangée
+        captured_pawn = self.piece_location[to_file][captured_pawn_rank]
+
+        if captured_pawn[0] != "":
+            # Ajouter à la liste des captures pour l'affichage
+            self.captured.append(captured_pawn.copy())
+            # Retirer le pion capturé
+            self.piece_location[to_file][captured_pawn_rank][0] = ""
+            print(f"Pion {captured_pawn[0]} capturé en passant")
+
+    def update_castling_rights(self, piece_name, from_file, from_rank):
+        """Met à jour les droits de roque après un mouvement"""
+        if piece_name == "white_king":
+            self.castling_rights['white_king_moved'] = True
+        elif piece_name == "black_king":
+            self.castling_rights['black_king_moved'] = True
+        elif piece_name == "white_rook":
+            if from_file == 'a' and from_rank == 1:
+                self.castling_rights['white_rook_a_moved'] = True
+            elif from_file == 'h' and from_rank == 1:
+                self.castling_rights['white_rook_h_moved'] = True
+        elif piece_name == "black_rook":
+            if from_file == 'a' and from_rank == 8:
+                self.castling_rights['black_rook_a_moved'] = True
+            elif from_file == 'h' and from_rank == 8:
+                self.castling_rights['black_rook_h_moved'] = True
 
     def check_game_status(self):
         """Vérifie l'état du jeu (échec, mat, pat, etc.)"""
@@ -781,7 +934,7 @@ class Chess(object):
                     # bottom left spot
                     if(y_coord + 1) < 8:
                         positions.append([x_coord-1, y_coord+1])
-                    
+
                 if(x_coord + 1) < 8:
                     # right spot
                     positions.append([x_coord+1, y_coord])
@@ -791,6 +944,9 @@ class Chess(object):
                     # bottom right spot
                     if(y_coord + 1) < 8:
                         positions.append([x_coord+1, y_coord+1])
+
+                # Ajouter les possibilités de roque
+                positions.extend(self.get_castling_moves(piece_name, x_coord, y_coord))
                 
             # calculate movs for queen
             elif piece_name[6:] == "queen":
@@ -1094,5 +1250,57 @@ class Chess(object):
             if len(p[0]) > 0 and piece_name[:5] != p[0][:5]:
                 break
 
-
         return positions
+
+    def get_castling_moves(self, king_piece, x_coord, y_coord):
+        """Retourne les positions possibles pour le roque"""
+        castling_positions = []
+
+        # Le roi doit être sur sa position initiale (colonne e, rangée 1 ou 8)
+        if x_coord != 4:  # colonne e = index 4
+            return castling_positions
+
+        # Déterminer la couleur du roi
+        if king_piece == "white_king":
+            if self.castling_rights['white_king_moved']:
+                return castling_positions
+            rank = 1
+            y = 7  # index pour la rangée 1
+
+            # Petit roque (kingside) - roi va en g1
+            if not self.castling_rights['white_rook_h_moved']:
+                # Vérifier que les cases f1 et g1 sont vides
+                if (self.piece_location['f'][rank][0] == "" and
+                    self.piece_location['g'][rank][0] == ""):
+                    castling_positions.append([6, y])  # position g1
+
+            # Grand roque (queenside) - roi va en c1
+            if not self.castling_rights['white_rook_a_moved']:
+                # Vérifier que les cases b1, c1 et d1 sont vides
+                if (self.piece_location['b'][rank][0] == "" and
+                    self.piece_location['c'][rank][0] == "" and
+                    self.piece_location['d'][rank][0] == ""):
+                    castling_positions.append([2, y])  # position c1
+
+        elif king_piece == "black_king":
+            if self.castling_rights['black_king_moved']:
+                return castling_positions
+            rank = 8
+            y = 0  # index pour la rangée 8
+
+            # Petit roque (kingside) - roi va en g8
+            if not self.castling_rights['black_rook_h_moved']:
+                # Vérifier que les cases f8 et g8 sont vides
+                if (self.piece_location['f'][rank][0] == "" and
+                    self.piece_location['g'][rank][0] == ""):
+                    castling_positions.append([6, y])  # position g8
+
+            # Grand roque (queenside) - roi va en c8
+            if not self.castling_rights['black_rook_a_moved']:
+                # Vérifier que les cases b8, c8 et d8 sont vides
+                if (self.piece_location['b'][rank][0] == "" and
+                    self.piece_location['c'][rank][0] == "" and
+                    self.piece_location['d'][rank][0] == ""):
+                    castling_positions.append([2, y])  # position c8
+
+        return castling_positions
