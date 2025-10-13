@@ -72,22 +72,25 @@
 
 1. **Cloner le projet**
    ```bash
-   git clone https://github.com/votre-username/chess-vs-stockfish.git
+   git clone https://github.com/romainbouchez/chess-vs-stockfish.git
    cd chess-vs-stockfish
    ```
 
 2. **Installer les dépendances**
    ```bash
+   pip install -r requirements.txt
+   ```
+
+   Ou manuellement :
+   ```bash
    pip install pygame python-chess
    ```
 
-3. **Télécharger Stockfish**
-   - Téléchargez Stockfish depuis [stockfishchess.org](https://stockfishchess.org/download/)
-   - Placez `stockfish.exe` dans le dossier du projet
-   - Mettez à jour le chemin dans `uci_stockfish.py` :
-     ```python
-     ENGINE_PATH = r"C:\chemin\vers\stockfish.exe"
-     ```
+3. **Télécharger un moteur d'échecs**
+
+   Le jeu téléchargera automatiquement Stockfish au premier lancement via le menu Paramètres > Moteurs.
+
+   Vous pouvez aussi télécharger manuellement Stockfish depuis [stockfishchess.org](https://stockfishchess.org/download/) et le placer dans le dossier `engines/`
 
 4. **Structure des fichiers**
    ```

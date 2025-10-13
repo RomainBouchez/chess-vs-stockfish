@@ -6,7 +6,7 @@ class Utils:
     def get_mouse_event(self):
         # get coordinates of the mouse
         position = pygame.mouse.get_pos()
-        
+
         # return left click status and mouse coordinates
         return position
 

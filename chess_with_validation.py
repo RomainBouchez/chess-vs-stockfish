@@ -1,8 +1,6 @@
 import pygame
 from pygame.locals import *
 import random
-import subprocess
-import os
 import time
 import chess  # Pour valider les coups
 
@@ -33,7 +31,11 @@ class Chess(object):
         self.BESTMOVE_FILE = "bestmove.txt"
         self.stockfish_thinking = False
         self.stockfish_failures = 0
-        
+
+        # Instance persistante du moteur universel
+        self.engine_instance = None
+        self.initialize_engine()
+
         # Board de validation avec python-chess
         self.validation_board = chess.Board()
 
@@ -59,7 +61,24 @@ class Chess(object):
         self.winner = ""
 
         self.reset()
-    
+
+    def initialize_engine(self):
+        """Initialise le moteur d'échecs une seule fois au début"""
+        try:
+            from universal_engine import get_universal_engine
+            self.engine_instance = get_universal_engine()
+            if self.engine_instance.initialize():
+                print("Moteur d'échecs initialisé avec succès!")
+                return True
+            else:
+                print("Échec de l'initialisation du moteur")
+                self.engine_instance = None
+                return False
+        except Exception as e:
+            print(f"Erreur lors de l'initialisation du moteur: {e}")
+            self.engine_instance = None
+            return False
+
     def reset(self):
         # clear moves lists
         self.moves = []
@@ -254,29 +273,49 @@ class Chess(object):
     def validate_and_apply_move(self, move_uci):
         """Valide et applique un coup en utilisant python-chess"""
         try:
+            print(f"DEBUG: Tentative d'application du coup {move_uci}")
+
+            # Forcer la synchronisation avant de valider
+            print("DEBUG: Synchronisation du board de validation...")
+            self.sync_validation_board()
+
             # Le board de validation devrait déjà être synchronisé, mais on vérifie
             current_fen = self.validation_board.fen()
             print(f"Board de validation avant coup Stockfish: {current_fen}")
-            
+
             # Créer le coup
             move = chess.Move.from_uci(move_uci)
-            
+            print(f"DEBUG: Coup UCI parsé: {move}")
+
             # Vérifier que le coup est légal
             if move not in self.validation_board.legal_moves:
-                print(f"Coup illégal détecté: {move_uci}")
+                print(f"ERREUR: Coup illégal détecté: {move_uci}")
                 print(f"Position actuelle: {self.validation_board.fen()}")
                 legal_moves_list = [m.uci() for m in self.validation_board.legal_moves]
                 print(f"Coups légaux: {legal_moves_list[:10]}...")  # Afficher les 10 premiers
+
+                # Debug supplémentaire: vérifier si c'est un problème de tour
+                if self.validation_board.turn:
+                    print("DEBUG: C'est au tour des BLANCS de jouer")
+                else:
+                    print("DEBUG: C'est au tour des NOIRS de jouer")
+
                 return False
-            
+
+            print(f"DEBUG: Coup légal, application...")
+
             # Appliquer le coup sur le board de validation
             self.validation_board.push(move)
-            
+
             # Appliquer le coup sur notre représentation interne
-            return self.apply_move_to_internal_board(move_uci)
-            
+            result = self.apply_move_to_internal_board(move_uci)
+            print(f"DEBUG: Résultat application interne: {result}")
+            return result
+
         except Exception as e:
-            print(f"Erreur lors de la validation du coup {move_uci}: {e}")
+            print(f"ERREUR lors de la validation du coup {move_uci}: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def apply_move_to_internal_board(self, move_uci):
@@ -392,74 +431,69 @@ class Chess(object):
         """Lance Stockfish pour obtenir le meilleur coup"""
         if self.stockfish_thinking:
             return
-            
+
         self.stockfish_thinking = True
         fen = self.get_fen()  # Utilise directement le board de validation
-        
+
         print(f"Position FEN: {fen}")
-        
+
         try:
-            # Lancer le script Stockfish avec timeout
-            result = subprocess.run(
-                ["python", self.ENGINE_SCRIPT, fen], 
-                check=True, 
-                timeout=5,
-                capture_output=True,
-                text=True
-            )
-            
-            # Lire le meilleur coup
-            if os.path.exists(self.BESTMOVE_FILE):
-                with open(self.BESTMOVE_FILE, "r") as f:
-                    bestmove = f.read().strip()
-                
-                if len(bestmove) >= 4:
-                    # Valider et appliquer le coup (le board de validation est déjà synchronisé)
-                    if self.validate_and_apply_move(bestmove):
-                        print(f"Stockfish joue: {bestmove}")
-                        self.stockfish_failures = 0  # Réinitialiser le compteur
-                    else:
-                        print(f"Coup Stockfish rejeté: {bestmove}")
-                        self.stockfish_failures += 1
-                        if self.stockfish_failures >= 3:
-                            print("Trop d'échecs, passage en mode aléatoire")
-                            self.play_random_move()
-                        else:
-                            # Changer de tour pour continuer
-                            self.turn["black"] = 0
-                            self.turn["white"] = 1
-                else:
-                    print(f"Format de coup invalide: {bestmove}")
+            # Utiliser l'instance persistante du moteur
+            if self.engine_instance is None:
+                print("Moteur non initialisé, tentative de réinitialisation...")
+                if not self.initialize_engine():
+                    print("Impossible d'initialiser le moteur, passage en mode aléatoire")
                     self.stockfish_failures += 1
+                    if self.stockfish_failures >= 3:
+                        self.play_random_move()
+                    else:
+                        self.turn["black"] = 0
+                        self.turn["white"] = 1
+                    self.stockfish_thinking = False
+                    return
+
+            # Obtenir le meilleur coup directement depuis l'instance du moteur
+            bestmove = self.engine_instance.get_best_move(fen)
+
+            if bestmove and len(bestmove) >= 4:
+                # Valider et appliquer le coup (le board de validation est déjà synchronisé)
+                if self.validate_and_apply_move(bestmove):
+                    print(f"Stockfish joue: {bestmove}")
+                    self.stockfish_failures = 0  # Réinitialiser le compteur
+                else:
+                    print(f"Coup Stockfish rejeté: {bestmove}")
+                    self.stockfish_failures += 1
+                    if self.stockfish_failures >= 3:
+                        print("Trop d'échecs, passage en mode aléatoire")
+                        self.play_random_move()
+                    else:
+                        # Changer de tour pour continuer
+                        self.turn["black"] = 0
+                        self.turn["white"] = 1
             else:
-                print("Fichier bestmove.txt non trouvé")
+                print(f"Coup invalide ou moteur n'a pas trouvé de coup")
                 self.stockfish_failures += 1
-                
-        except subprocess.TimeoutExpired:
-            print("Timeout: Stockfish a pris trop de temps")
-            self.stockfish_failures += 1
-        except subprocess.CalledProcessError as e:
-            print(f"Erreur Stockfish (code {e.returncode}):")
-            if e.stdout:
-                print(f"Sortie: {e.stdout}")
-            if e.stderr:
-                print(f"Erreur: {e.stderr}")
-            
-            self.stockfish_failures += 1
-            
-            if self.stockfish_failures >= 3:
-                print("Trop d'échecs de Stockfish, passage en mode coup aléatoire")
-                self.play_random_move()
-            else:
-                print("Stockfish indisponible, tour passé")
-                # Changer de tour pour continuer le jeu
-                self.turn["black"] = 0
-                self.turn["white"] = 1
-                
+                if self.stockfish_failures >= 3:
+                    print("Trop d'échecs de Stockfish, passage en mode coup aléatoire")
+                    self.play_random_move()
+                else:
+                    print("Stockfish indisponible, tour passé")
+                    # Changer de tour pour continuer le jeu
+                    self.turn["black"] = 0
+                    self.turn["white"] = 1
+
         except Exception as e:
             print(f"Erreur inattendue: {e}")
+            import traceback
+            traceback.print_exc()
             self.stockfish_failures += 1
-        
+            if self.stockfish_failures >= 3:
+                print("Passage en mode aléatoire après erreur")
+                self.play_random_move()
+            else:
+                self.turn["black"] = 0
+                self.turn["white"] = 1
+
         self.stockfish_thinking = False
 
     def play_random_move(self):

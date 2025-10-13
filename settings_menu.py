@@ -1,14 +1,18 @@
 import pygame
 from pygame.locals import *
 from settings import StockfishSettings
+from universal_settings import UniversalEngineSettings
+from engine_menu import EngineMenu
 
 class SettingsMenu:
     """Interface graphique pour configurer Stockfish"""
     
     def __init__(self, screen):
         self.screen = screen
-        self.settings = StockfishSettings()
+        self.settings = StockfishSettings()  # Garder pour compatibilité
+        self.universal_settings = UniversalEngineSettings()
         self.mode = "basic"  # "basic" ou "advanced"
+        self.current_engine = self.universal_settings.get_selected_engine()
         
         # Couleurs
         self.WHITE = (255, 255, 255)
@@ -34,11 +38,13 @@ class SettingsMenu:
     def setup_buttons(self):
         """Initialise les boutons du menu"""
         self.buttons = {
-            "basic": pygame.Rect(50, 100, 200, 40),
-            "advanced": pygame.Rect(270, 100, 200, 40),
-            "save": pygame.Rect(50, 650, 150, 50),
-            "cancel": pygame.Rect(220, 650, 150, 50),
-            "reset": pygame.Rect(390, 650, 150, 50)
+            "basic": pygame.Rect(50, 100, 150, 40),
+            "advanced": pygame.Rect(220, 100, 150, 40),
+            "engines": pygame.Rect(390, 100, 150, 40),
+            "save": pygame.Rect(50, 650, 120, 50),
+            "cancel": pygame.Rect(180, 650, 120, 50),
+            "reset": pygame.Rect(310, 650, 120, 50),
+            "engines_menu": pygame.Rect(440, 650, 120, 50)
         }
     
     def draw_slider(self, x, y, width, label, value, min_val, max_val, key):
@@ -108,79 +114,64 @@ class SettingsMenu:
     def draw_basic_settings(self):
         """Affiche les paramètres basiques (ELO uniquement)"""
         y_pos = 180
-        
-        # ELO slider
-        current_elo = self.settings.get_elo()
+
+        # Actualiser le moteur actuel
+        self.current_engine = self.universal_settings.get_selected_engine()
+
+        # Afficher le moteur actuel
+        engine_text = self.normal_font.render(f"Moteur actuel: {self.current_engine}", True, self.BLACK)
+        self.screen.blit(engine_text, (100, y_pos))
+        y_pos += 40
+
+        # ELO slider avec plage dynamique
+        current_elo = self.universal_settings.get_elo_for_engine()
+        min_elo, max_elo = self.universal_settings.get_elo_range_for_engine()
         y_pos = self.draw_slider(
-            100, y_pos, 400, 
-            f"Niveau ELO (approximatif):", 
-            current_elo, 1350, 3200, "elo"
+            100, y_pos, 400,
+            f"Niveau ELO (approximatif):",
+            current_elo, min_elo, max_elo, "elo"
         )
         
-        # Descriptions des niveaux
+        # Descriptions des niveaux adaptées à la plage du moteur
+        range_size = max_elo - min_elo
+        quarter = range_size // 4
+
         descriptions = [
-            ("1350-1500: Débutant", 120),
-            ("1500-2000: Intermédiaire", 180),
-            ("2000-2500: Avancé", 240),
-            ("2500-3200: Expert/Maître", 300)
+            (f"{min_elo}-{min_elo + quarter}: Débutant", 20),
+            (f"{min_elo + quarter}-{min_elo + 2*quarter}: Intermédiaire", 40),
+            (f"{min_elo + 2*quarter}-{min_elo + 3*quarter}: Avancé", 60),
+            (f"{min_elo + 3*quarter}-{max_elo}: Expert/Maître", 80)
         ]
-        
+
         for desc, y_offset in descriptions:
             desc_surf = self.small_font.render(desc, True, self.GRAY)
             self.screen.blit(desc_surf, (120, y_pos + y_offset))
     
     def draw_advanced_settings(self):
-        """Affiche tous les paramètres avancés"""
+        """Affiche tous les paramètres avancés selon le moteur actuel"""
         y_pos = 180
-        
-        # Skill Level
-        y_pos = self.draw_slider(
-            100, y_pos, 350,
-            "Skill Level (0=faible, 20=max):",
-            self.settings.settings["skill_level"],
-            0, 20, "skill_level"
-        )
-        
-        # Threads
-        y_pos = self.draw_slider(
-            100, y_pos, 350,
-            "Threads CPU:",
-            self.settings.settings["threads"],
-            1, 8, "threads"
-        )
-        
-        # Hash
-        y_pos = self.draw_slider(
-            100, y_pos, 350,
-            "Mémoire Hash (MB):",
-            self.settings.settings["hash"],
-            16, 1024, "hash"
-        )
-        
-        # Time limit
-        y_pos = self.draw_slider(
-            100, y_pos, 350,
-            "Temps max par coup (s, 0=illimité):",
-            self.settings.settings["time_limit"],
-            0, 5, "time_limit"
-        )
-        
-        # Depth limit
-        y_pos = self.draw_slider(
-            100, y_pos, 350,
-            "Profondeur max (coups, 0=illimité):",
-            self.settings.settings["depth_limit"],
-            0, 30, "depth_limit"
-        )
-        
-        # Move Overhead
-        move_overhead = self.settings.settings.get("move_overhead", 10)
-        y_pos = self.draw_slider(
-            100, y_pos, 350,
-            "Move Overhead (ms, compensation lag):",
-            move_overhead,
-            0, 1000, "move_overhead"
-        )
+
+        # Actualiser le moteur actuel
+        self.current_engine = self.universal_settings.get_selected_engine()
+
+        # Afficher le moteur actuel
+        engine_text = self.normal_font.render(f"Moteur actuel: {self.current_engine}", True, self.BLACK)
+        self.screen.blit(engine_text, (100, y_pos))
+        y_pos += 30
+
+        # Obtenir les paramètres et options disponibles
+        current_settings = self.universal_settings.get_engine_settings()
+        available_options = self.universal_settings.get_available_options()
+
+        # Afficher les sliders selon les options disponibles
+        for option, config in available_options.items():
+            current_value = current_settings.get(option, config["default"])
+            y_pos = self.draw_slider(
+                100, y_pos, 350,
+                f"{config['description']}:",
+                current_value,
+                config["min"], config["max"], option
+            )
         
         # Note explicative
         note_y = y_pos + 20
@@ -191,6 +182,67 @@ class SettingsMenu:
         for i, line in enumerate(note_lines):
             note_text = self.small_font.render(line, True, self.GRAY)
             self.screen.blit(note_text, (100, note_y + i * 20))
+    
+    def draw_engines_info(self):
+        """Affiche les informations sur les moteurs"""
+        y_pos = 180
+        
+        try:
+            # Lire le moteur sélectionné
+            with open("selected_engine.txt", "r") as f:
+                selected_engine = f.read().strip()
+        except:
+            selected_engine = None
+        
+        if selected_engine:
+            # Afficher le moteur actuel
+            engine_text = self.normal_font.render(f"Moteur actuel: {selected_engine}", True, self.BLACK)
+            self.screen.blit(engine_text, (100, y_pos))
+            y_pos += 40
+            
+            # Vérifier si le moteur existe
+            from engine_manager import EngineManager
+            engine_manager = EngineManager()
+            engine_path = engine_manager.get_engine_path(selected_engine)
+            
+            if engine_path:
+                status_text = self.small_font.render(f"Chemin: {engine_path}", True, self.GREEN)
+                self.screen.blit(status_text, (100, y_pos))
+                y_pos += 25
+                
+                # Test de fonctionnement
+                if engine_manager.verify_engine(selected_engine):
+                    verify_text = self.small_font.render("✓ Moteur opérationnel", True, self.GREEN)
+                else:
+                    verify_text = self.small_font.render("✗ Erreur de communication", True, self.RED)
+                self.screen.blit(verify_text, (100, y_pos))
+                y_pos += 40
+            else:
+                status_text = self.small_font.render("✗ Moteur non trouvé", True, self.RED)
+                self.screen.blit(status_text, (100, y_pos))
+                y_pos += 40
+        else:
+            no_engine_text = self.normal_font.render("Aucun moteur sélectionné", True, self.RED)
+            self.screen.blit(no_engine_text, (100, y_pos))
+            y_pos += 40
+        
+        # Instructions
+        instructions = [
+            "Pour gérer les moteurs (télécharger, installer, sélectionner):",
+            "• Cliquez sur 'Gérer Moteurs' en bas de l'écran",
+            "• Téléchargez les moteurs officiels disponibles",
+            "• Sélectionnez le moteur à utiliser dans vos parties",
+            "",
+            "Moteurs supportés:",
+            "• Stockfish (versions 15 et 16)",
+            "• D'autres moteurs peuvent être ajoutés"
+        ]
+        
+        for instruction in instructions:
+            if instruction:
+                inst_text = self.small_font.render(instruction, True, self.GRAY)
+                self.screen.blit(inst_text, (100, y_pos))
+            y_pos += 20
     
     def draw_button(self, key, label, color):
         """Dessine un bouton"""
@@ -207,27 +259,34 @@ class SettingsMenu:
         # Fond
         self.screen.fill(self.WHITE)
         
-        # Titre
-        title = self.title_font.render("Paramètres Stockfish", True, self.BLACK)
+        # Titre adaptatif selon le moteur
+        current_engine = self.universal_settings.get_selected_engine()
+        title_text = f"Paramètres {current_engine}"
+        title = self.title_font.render(title_text, True, self.BLACK)
         self.screen.blit(title, ((self.screen.get_width() - title.get_width()) // 2, 30))
         
         # Boutons de mode
         basic_color = self.BLUE if self.mode == "basic" else self.GRAY
         advanced_color = self.BLUE if self.mode == "advanced" else self.GRAY
+        engines_color = self.BLUE if self.mode == "engines" else self.GRAY
         
         self.draw_button("basic", "Basique", basic_color)
         self.draw_button("advanced", "Avancé", advanced_color)
+        self.draw_button("engines", "Moteurs", engines_color)
         
         # Paramètres selon le mode
         if self.mode == "basic":
             self.draw_basic_settings()
-        else:
+        elif self.mode == "advanced":
             self.draw_advanced_settings()
+        elif self.mode == "engines":
+            self.draw_engines_info()
         
         # Boutons d'action
         self.draw_button("save", "Sauvegarder", self.GREEN)
         self.draw_button("cancel", "Annuler", self.RED)
         self.draw_button("reset", "Défaut", self.GRAY)
+        self.draw_button("engines_menu", "Gérer Moteurs", self.BLUE)
     
     def handle_click(self, pos):
         """Gère les clics de souris"""
@@ -239,18 +298,36 @@ class SettingsMenu:
         if self.buttons["advanced"].collidepoint(pos):
             self.mode = "advanced"
             return None
+            
+        if self.buttons["engines"].collidepoint(pos):
+            self.mode = "engines"
+            return None
         
         # Boutons d'action
         if self.buttons["save"].collidepoint(pos):
+            # Sauvegarder les paramètres universels
+            self.universal_settings.save_settings()
+            # Aussi sauvegarder les anciens paramètres pour compatibilité
             self.settings.save_settings()
             return "save"
-        
+
         if self.buttons["cancel"].collidepoint(pos):
-            self.settings.load_settings()  # Recharger
+            # Recharger les paramètres
+            self.universal_settings = UniversalEngineSettings()
+            self.settings.load_settings()
             return "cancel"
-        
+
         if self.buttons["reset"].collidepoint(pos):
+            # Reset pour le moteur actuel
+            self.universal_settings.reset_engine_to_defaults()
             self.settings.reset_to_defaults()
+            return None
+            
+        if self.buttons["engines_menu"].collidepoint(pos):
+            # Ouvrir le menu de gestion des moteurs
+            engine_menu = EngineMenu(self.screen)
+            result = engine_menu.run()
+            # Forcer la réactualisation de l'affichage après retour du menu moteurs
             return None
         
         # Vérifier les sliders
@@ -292,9 +369,15 @@ class SettingsMenu:
                 
                 # Gérer l'ELO (mode basique)
                 if self.dragging == "elo":
+                    self.universal_settings.set_elo_for_engine(int(new_value))
+                    # Aussi mettre à jour l'ancien système pour compatibilité
                     self.settings.set_elo(int(new_value))
                 else:
-                    self.settings.settings[self.dragging] = new_value
+                    # Sauvegarder dans le système universel
+                    self.universal_settings.set_engine_setting(self.dragging, new_value)
+                    # Aussi dans l'ancien système si c'est un paramètre Stockfish
+                    if hasattr(self.settings.settings, '__contains__') and self.dragging in self.settings.settings:
+                        self.settings.settings[self.dragging] = new_value
     
     def handle_release(self):
         """Arrête le déplacement"""

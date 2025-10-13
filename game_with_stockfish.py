@@ -30,8 +30,16 @@ class Game:
         # create game window
         self.screen = pygame.display.set_mode([screen_width, screen_height])
 
-        # title of window
-        window_title = "Chess vs Stockfish"
+        # title of window avec le moteur actuel
+        from universal_engine import get_universal_engine
+        engine = get_universal_engine()
+        engine_info = engine.get_engine_info()
+        
+        if engine_info["name"]:
+            window_title = f"Chess vs {engine_info['name']}"
+        else:
+            window_title = "Chess vs AI Engine"
+        
         # set window caption
         pygame.display.set_caption(window_title)
 
@@ -148,12 +156,31 @@ class Game:
         tiny_font = pygame.font.SysFont("comicsansms", 16)
         
         # create text to be shown on the game menu
-        welcome_text = big_font.render("Chess vs Stockfish", False, black_color)
+        from universal_engine import get_universal_engine
+        engine = get_universal_engine()
+        engine_info = engine.get_engine_info()
+        
+        if engine_info["name"]:
+            title_text = f"Chess vs {engine_info['name']}"
+        else:
+            title_text = "Chess vs AI Engine"
+            
+        welcome_text = big_font.render(title_text, False, black_color)
         subtitle_text = medium_font.render("You play White", False, black_color)
         
-        # Afficher l'ELO actuel
-        current_elo = self.stockfish_settings.get_elo()
-        elo_text = tiny_font.render(f"Niveau Stockfish: {current_elo} ELO", True, (100, 100, 100))
+        # Afficher l'ELO actuel du moteur sélectionné
+        from universal_settings import UniversalEngineSettings
+        universal_settings = UniversalEngineSettings()
+        current_engine = universal_settings.get_selected_engine()
+        current_elo = universal_settings.get_elo_for_engine()
+
+        # Nom du moteur pour l'affichage
+        if current_engine == "legacy_stockfish":
+            engine_display = "Stockfish"
+        else:
+            engine_display = current_engine.replace("_", " ").title()
+
+        elo_text = tiny_font.render(f"Niveau {engine_display}: {current_elo} ELO", True, (100, 100, 100))
         
         created_by = small_font.render("Human vs AI", True, black_color)
         start_btn_label = small_font.render("Play", True, white_color)
@@ -212,11 +239,25 @@ class Game:
                 
                 # Recharger les paramètres après fermeture du menu
                 if result == "save":
+                    from universal_settings import UniversalEngineSettings
+                    universal_settings = UniversalEngineSettings()
+
+                    current_engine = universal_settings.get_selected_engine()
+                    current_elo = universal_settings.get_elo_for_engine()
+                    current_settings = universal_settings.get_engine_settings()
+
+                    print(f"Nouveaux paramètres {current_engine} :")
+                    print(f"  - ELO: {current_elo}")
+
+                    if "skill_level" in current_settings:
+                        print(f"  - Skill Level: {current_settings['skill_level']}")
+                    if "time_limit" in current_settings:
+                        print(f"  - Temps: {current_settings['time_limit']}s")
+                    if "threads" in current_settings:
+                        print(f"  - Threads: {current_settings['threads']}")
+
+                    # Aussi recharger les anciens paramètres pour compatibilité
                     self.stockfish_settings.load_settings()
-                    print("Nouveaux paramètres Stockfish :")
-                    print(f"  - ELO: {self.stockfish_settings.get_elo()}")
-                    print(f"  - Skill Level: {self.stockfish_settings.settings['skill_level']}")
-                    print(f"  - Temps: {self.stockfish_settings.settings['time_limit']}s")
                 
             # check if enter or return key was pressed
             elif key_pressed[K_RETURN]:
@@ -232,11 +273,20 @@ class Game:
         # show the chess board
         self.screen.blit(self.board_img, self.board_dimensions)
 
-        # Afficher un message si Stockfish réfléchit
+        # Afficher un message si le moteur réfléchit
         if self.chess.stockfish_thinking:
             white_color = (255, 255, 255)
             small_font = pygame.font.SysFont("comicsansms", 20)
-            thinking_text = small_font.render("Stockfish is thinking...", True, white_color)
+            from universal_engine import get_universal_engine
+            engine = get_universal_engine()
+            engine_info = engine.get_engine_info()
+            
+            if engine_info["name"]:
+                thinking_msg = f"{engine_info['name']} is thinking..."
+            else:
+                thinking_msg = "AI Engine is thinking..."
+                
+            thinking_text = small_font.render(thinking_msg, True, white_color)
             self.screen.blit(thinking_text, 
                           ((self.screen.get_width() - thinking_text.get_width()) // 2,
                           30))
@@ -272,7 +322,14 @@ class Game:
         if winner == "White":
             text = "You win!"
         else:
-            text = "Stockfish wins!"
+            from universal_engine import get_universal_engine
+            engine = get_universal_engine()
+            engine_info = engine.get_engine_info()
+            
+            if engine_info["name"]:
+                text = f"{engine_info['name']} wins!"
+            else:
+                text = "AI Engine wins!"
             
         winner_text = big_font.render(text, False, black_color)
 

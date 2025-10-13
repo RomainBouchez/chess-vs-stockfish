@@ -1,1 +1,37 @@
+# Python
 *.pyc
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Chess engines (downloaded at runtime)
+engines/
+!engines/.gitkeep
+
+# Temporary game files
+bestmove.txt
+selected_engine.txt
+engine_settings.json
+engines_config.json
+
+# OS
+.DS_Store
+Thumbs.db
+nul
+
+# Logs
+*.log
