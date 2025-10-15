@@ -441,6 +441,9 @@ class Chess(object):
         # Vérifier l'état du jeu après le coup
         self.check_game_status()
 
+        # Vider la liste des coups possibles après avoir joué
+        self.moves = []
+
         print(f"Coup appliqué: {move_uci} ({source_piece} de {from_square} vers {to_square})")
         return True
 
@@ -1086,15 +1089,17 @@ class Chess(object):
                     self.piece_location[k][key][1] = False
                     # get the name of the source piece
                     piece_name = self.piece_location[k][key][0]
-                    
+
                     # Créer le coup UCI pour validation
                     move_uci = f"{k}{key}{desColChar}{desRowNo}".lower()
-                    
+
                     # Valider le coup humain avec le système de validation
                     if self.validate_and_apply_human_move(move_uci, k, key, desColChar, desRowNo, piece_name):
                         src_location = k + str(key)
                         des_location = desColChar + str(desRowNo)
                         print("{} moved from {} to {}".format(piece_name, src_location, des_location))
+                        # Vider la liste des coups possibles après avoir joué
+                        self.moves = []
                     break
 
 

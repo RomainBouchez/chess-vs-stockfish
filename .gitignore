@@ -17,6 +17,7 @@ ENV/
 *.swp
 *.swo
 *~
+.claude/
 
 # Chess engines (downloaded at runtime)
 engines/

@@ -126,35 +126,45 @@ class UniversalEngine:
         """Obtient le meilleur coup pour une position FEN donnée"""
         if not self.engine and not self.initialize():
             return None
-        
+
         try:
             board = chess.Board(fen)
-            
+
             # Vérifier que la position est valide
             if not board.is_valid():
                 print(f"[ERREUR] Position FEN invalide : {fen}")
                 return None
-            
+
             # Obtenir les limites de recherche depuis les paramètres universels
             search_limits = self.universal_settings.get_search_limits(self.engine_name)
-            
+
             # Créer l'objet Limit
             limit_kwargs = {}
             if "time" in search_limits:
                 limit_kwargs["time"] = search_limits["time"]
             if "depth" in search_limits:
                 limit_kwargs["depth"] = search_limits["depth"]
-            
+
             limit = chess.engine.Limit(**limit_kwargs)
-            
+
             # Demander le meilleur coup
             result = self.engine.play(board, limit)
-            
+
             if result.move is None:
                 print("[ERREUR] Le moteur n'a pas trouvé de coup")
                 return None
-            
-            return result.move.uci()
+
+            bestmove_uci = result.move.uci()
+
+            # Écrire le coup dans bestmove.txt pour le robot
+            try:
+                with open("bestmove.txt", "w") as f:
+                    f.write(bestmove_uci)
+                print(f"[INFO] Coup écrit dans bestmove.txt: {bestmove_uci}")
+            except Exception as e:
+                print(f"[AVERTISSEMENT] Impossible d'écrire dans bestmove.txt: {e}")
+
+            return bestmove_uci
             
         except chess.engine.EngineTerminatedError:
             print("[ERREUR] Le moteur s'est arrêté de manière inattendue")

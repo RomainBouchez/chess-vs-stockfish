@@ -107,6 +107,8 @@ class Game:
                 key_pressed = pygame.key.get_pressed()
                 # check if the game has been closed by the user
                 if event.type == pygame.QUIT or key_pressed[K_ESCAPE]:
+                    # Réinitialiser le fichier bestmove.txt
+                    self.cleanup()
                     # set flag to break out of the game loop
                     self.running = False
                 elif key_pressed[K_SPACE]:
@@ -128,6 +130,16 @@ class Game:
 
         # call method to stop pygame
         pygame.quit()
+
+    def cleanup(self):
+        """Nettoie les fichiers temporaires avant de quitter"""
+        try:
+            # Réinitialiser bestmove.txt
+            with open("bestmove.txt", "w") as f:
+                f.write("")
+            print("[INFO] Fichier bestmove.txt réinitialisé")
+        except Exception as e:
+            print(f"[AVERTISSEMENT] Impossible de réinitialiser bestmove.txt: {e}")
     
 
     def menu(self):
