@@ -3,7 +3,7 @@ import os
 from universal_engine import get_universal_engine
 
 # === CONFIGURATION ===
-OUTPUT_FILE = "bestmove.txt"
+OUTPUT_FILE = "next_move.txt"
 
 def main():
     # Obtenir l'instance du moteur universel
@@ -26,9 +26,9 @@ def main():
         print("[ERREUR] Le moteur n'a pas trouvé de coup")
         sys.exit(1)
 
-    # Écrire dans bestmove.txt
+    # Écrire dans next_move.txt
     with open(OUTPUT_FILE, "w") as f:
-        f.write(bestmove)
+        f.write(f"B;{bestmove}")
 
     print(f"Meilleur coup : {bestmove} (écrit dans {OUTPUT_FILE})")
 
