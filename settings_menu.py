@@ -31,17 +31,63 @@ class SettingsMenu:
         self.dragging = None
         self.buttons = {}
         self.setup_buttons()
+
+    def truncate_text(self, font, text, max_width):
+        """Return a text possibly truncated with ellipsis to fit into max_width pixels."""
+        if font.size(text)[0] <= max_width:
+            return text
+        ell = '…'
+        lo, hi = 0, len(text)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            candidate = text[:mid].rstrip() + ell
+            if font.size(candidate)[0] <= max_width:
+                lo = mid + 1
+            else:
+                hi = mid
+        return text[:max(0, lo-1)].rstrip() + ell
     
     def setup_buttons(self):
+        # Top tabs (fixed positions)
         self.buttons = {
             "basic": pygame.Rect(50, 100, 150, 40),
             "advanced": pygame.Rect(220, 100, 150, 40),
             "engines": pygame.Rect(390, 100, 150, 40),
-            "save": pygame.Rect(50, 650, 140, 50),
-            "cancel": pygame.Rect(200, 650, 140, 50),
-            "reset": pygame.Rect(350, 650, 140, 50),
-            "engines_menu": pygame.Rect(self.WIDTH - 190, 650, 140, 50)
         }
+
+        # Bottom action buttons: layout dynamically to avoid overlap on narrow windows
+        bottom_keys = ["save", "cancel", "reset", "engines_menu"]
+        bottom_y = max( self.screen.get_height() - 100, 560 )
+        margin = 50
+        spacing = 20
+        total_width = self.WIDTH - 2 * margin
+        # Maximum reasonable width per button
+        max_btn_w = 180
+        btn_h = 50
+
+        # Compute button width so they fit, otherwise shrink
+        btn_w = min(max_btn_w, (total_width - (len(bottom_keys) - 1) * spacing) // len(bottom_keys))
+
+        # If even after shrinking buttons would be too small, wrap into two rows
+        min_btn_w = 80
+        if btn_w < min_btn_w:
+            # two rows layout: split half/half
+            first_row = bottom_keys[:2]
+            second_row = bottom_keys[2:]
+            row_y_offsets = [bottom_y - btn_h - 10, bottom_y]
+            for row_idx, row in enumerate([first_row, second_row]):
+                row_total = len(row)
+                row_btn_w = min(max_btn_w, (total_width - (row_total - 1) * spacing) // row_total)
+                start_x = margin + (total_width - (row_btn_w * row_total + spacing * (row_total - 1))) // 2
+                for i, key in enumerate(row):
+                    x = start_x + i * (row_btn_w + spacing)
+                    self.buttons[key] = pygame.Rect(x, row_y_offsets[row_idx], row_btn_w, btn_h)
+        else:
+            # Single row centered
+            start_x = margin + (total_width - (btn_w * len(bottom_keys) + spacing * (len(bottom_keys) - 1))) // 2
+            for i, key in enumerate(bottom_keys):
+                x = start_x + i * (btn_w + spacing)
+                self.buttons[key] = pygame.Rect(x, bottom_y, btn_w, btn_h)
     
     def draw_slider(self, x, y, width, label, value, min_val, max_val, key):
         label_surf = self.normal_font.render(label, True, self.TEXT_COLOR)
@@ -66,7 +112,10 @@ class SettingsMenu:
     def draw_basic_settings(self):
         y_pos = 180
         self.current_engine = self.universal_settings.get_selected_engine()
-        engine_text = self.normal_font.render(f"Current Engine: {self.current_engine}", True, self.TEXT_COLOR)
+        # Truncate engine name if too long for the centered area
+        max_name_w = max(100, self.WIDTH - 300)
+        engine_name = self.truncate_text(self.normal_font, self.current_engine, max_name_w)
+        engine_text = self.normal_font.render(f"Current Engine: {engine_name}", True, self.TEXT_COLOR)
         self.screen.blit(engine_text, engine_text.get_rect(center=(self.WIDTH // 2, y_pos)))
         y_pos += 60
 
@@ -107,7 +156,8 @@ class SettingsMenu:
         selected_engine = self.universal_settings.get_selected_engine()
         
         if selected_engine:
-            engine_text = self.normal_font.render(f"Current Engine: {selected_engine}", True, self.TEXT_COLOR)
+            engine_display = self.truncate_text(self.normal_font, selected_engine, max(80, self.WIDTH - 300))
+            engine_text = self.normal_font.render(f"Current Engine: {engine_display}", True, self.TEXT_COLOR)
             self.screen.blit(engine_text, (100, y_pos))
             y_pos += 30
             
@@ -134,7 +184,11 @@ class SettingsMenu:
     def draw_button(self, key, label, color):
         rect = self.buttons[key]
         pygame.draw.rect(self.screen, color, rect, border_radius=10)
-        text_surf = self.normal_font.render(label, True, self.TEXT_COLOR)
+        # Truncate label to fit inside button
+        padding = 10
+        max_w = rect.width - padding * 2
+        label_to_draw = self.truncate_text(self.normal_font, label, max_w)
+        text_surf = self.normal_font.render(label_to_draw, True, self.TEXT_COLOR)
         self.screen.blit(text_surf, text_surf.get_rect(center=rect.center))
     
     def draw(self):
