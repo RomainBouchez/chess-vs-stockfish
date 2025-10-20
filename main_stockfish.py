@@ -62,6 +62,55 @@ def main_menu():
     
     return selected_mode
 
+
+def choose_color_modal(screen):
+    """Affiche un petit modal pour choisir White/Black/Random. Retourne 'WHITE'/'BLACK'."""
+    modal_w, modal_h = 500, 220
+    modal = pygame.Surface((modal_w, modal_h))
+    modal.fill((40, 40, 40))
+    rect = modal.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
+
+    font = pygame.font.Font(None, 36)
+    title = font.render("Choose your color to play vs Stockfish", True, (220, 220, 220))
+
+    btn_w, btn_h = 120, 50
+    spacing = 30
+    start_x = (modal_w - (3 * btn_w + 2 * spacing)) // 2
+    y = 110
+
+    white_btn = pygame.Rect(start_x, y, btn_w, btn_h)
+    black_btn = pygame.Rect(start_x + btn_w + spacing, y, btn_w, btn_h)
+    rand_btn = pygame.Rect(start_x + 2 * (btn_w + spacing), y, btn_w, btn_h)
+
+    while True:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                pygame.quit(); sys.exit(0)
+            if ev.type == pygame.MOUSEBUTTONDOWN:
+                mx, my = ev.pos
+                # transform mouse to modal-relative
+                rel_x, rel_y = mx - rect.left, my - rect.top
+                if white_btn.collidepoint((rel_x, rel_y)):
+                    return 'WHITE'
+                if black_btn.collidepoint((rel_x, rel_y)):
+                    return 'BLACK'
+                if rand_btn.collidepoint((rel_x, rel_y)):
+                    import random
+                    return random.choice(['WHITE', 'BLACK'])
+
+        # draw modal
+        screen.fill(BLACK)
+        screen.blit(modal, rect)
+        modal.blit(title, title.get_rect(center=(modal_w//2, 40)))
+        pygame.draw.rect(modal, (200,200,200), white_btn, border_radius=6)
+        pygame.draw.rect(modal, (200,200,200), black_btn, border_radius=6)
+        pygame.draw.rect(modal, (200,200,200), rand_btn, border_radius=6)
+        modal.blit(font.render('White', True, (0,0,0)), font.render('White', True, (0,0,0)).get_rect(center=white_btn.center))
+        modal.blit(font.render('Black', True, (0,0,0)), font.render('Black', True, (0,0,0)).get_rect(center=black_btn.center))
+        modal.blit(font.render('Random', True, (0,0,0)), font.render('Random', True, (0,0,0)).get_rect(center=rand_btn.center))
+
+        pygame.display.flip()
+
 def initialize_pvp_game_state():
     """Creates or clears the communication file for a new 1v1 game."""
     filename = "next_move.txt"
@@ -80,9 +129,13 @@ if __name__ == "__main__":
 
     if game_mode == 'pve':
         # For PVE, we run the game in the current process as before.
-        # The player is always White in this mode.
-        print("Starting Player vs AI game...")
-        game = Game(mode='pve', player_color='WHITE')
+        # Ask the user which color they want (White/Black/Random)
+        print("Starting Player vs AI game... selecting player color")
+        pygame.display.init()
+        screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+        player_color = choose_color_modal(screen)
+        print(f"Player chose: {player_color}")
+        game = Game(mode='pve', player_color=player_color)
         game.start_game()
 
     elif game_mode == 'pvp':

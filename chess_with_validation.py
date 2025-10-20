@@ -90,11 +90,21 @@ class Chess(object):
         """Handles a single turn for PVE mode."""
         if self.winner: return
 
-        if self.turn["white"]:
-            self.handle_human_move("white", is_flipped=False)
-        elif not self.stockfish_thinking:
-            pygame.time.wait(200)
-            self.run_stockfish_move()
+        # Determine which color the human is playing and whether board is flipped
+        human_color = self.player_color.lower() if hasattr(self, 'player_color') else 'white'
+        is_flipped = (human_color == 'black')
+
+        # validation_board.turn is True when it's White's move, False for Black
+        board_turn_is_white = self.validation_board.turn == chess.WHITE
+
+        # If it's the human's turn, handle human input. Otherwise let engine play.
+        if (board_turn_is_white and human_color == 'white') or (not board_turn_is_white and human_color == 'black'):
+            # human to move
+            self.handle_human_move(human_color, is_flipped=is_flipped)
+        else:
+            if not self.stockfish_thinking:
+                pygame.time.wait(200)
+                self.run_stockfish_move()
 
     # MODIFIED: This function now returns True if a move was successfully made.
     def handle_human_move(self, turn_color, is_flipped):
