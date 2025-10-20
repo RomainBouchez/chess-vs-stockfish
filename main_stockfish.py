@@ -64,52 +64,63 @@ def main_menu():
 
 
 def choose_color_modal(screen):
-    """Affiche un petit modal pour choisir White/Black/Random. Retourne 'WHITE'/'BLACK'."""
-    modal_w, modal_h = 500, 220
-    modal = pygame.Surface((modal_w, modal_h))
-    modal.fill((40, 40, 40))
-    rect = modal.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
+    """
+    Affiche un écran de sélection de couleur avec le même style que le menu principal.
+    Retourne 'WHITE' ou 'BLACK' (ou aléatoire si choisi).
+    """
+    # --- Paramètres d'affichage identiques ---
+    title_font = pygame.font.Font(None, 80)
+    button_font = pygame.font.Font(None, 50)
 
-    font = pygame.font.Font(None, 36)
-    title = font.render("Choose your color to play vs Stockfish", True, (220, 220, 220))
+    button_width = 300
+    button_height = 70
+    spacing = 40
+    button_x = (SCREEN_WIDTH - button_width) // 2
 
-    btn_w, btn_h = 120, 50
-    spacing = 30
-    start_x = (modal_w - (3 * btn_w + 2 * spacing)) // 2
-    y = 110
+    # --- Boutons pour les choix ---
+    white_button = pygame.Rect(button_x, 300, button_width, button_height)
+    black_button = pygame.Rect(button_x, 400, button_width, button_height)
+    random_button = pygame.Rect(button_x, 500, button_width, button_height)
 
-    white_btn = pygame.Rect(start_x, y, btn_w, btn_h)
-    black_btn = pygame.Rect(start_x + btn_w + spacing, y, btn_w, btn_h)
-    rand_btn = pygame.Rect(start_x + 2 * (btn_w + spacing), y, btn_w, btn_h)
+    running = True
 
-    while True:
-        for ev in pygame.event.get():
-            if ev.type == pygame.QUIT:
-                pygame.quit(); sys.exit(0)
-            if ev.type == pygame.MOUSEBUTTONDOWN:
-                mx, my = ev.pos
-                # transform mouse to modal-relative
-                rel_x, rel_y = mx - rect.left, my - rect.top
-                if white_btn.collidepoint((rel_x, rel_y)):
+    while running:
+        screen.fill(BLACK)
+
+        # --- Titre ---
+        title_text = title_font.render("Choose your color", True, WHITE)
+        title_rect = title_text.get_rect(center=(SCREEN_WIDTH // 2, 180))
+        screen.blit(title_text, title_rect)
+
+        # --- Dessin des boutons avec le même style que le menu principal ---
+        pygame.draw.rect(screen, GREY, white_button, border_radius=10)
+        pygame.draw.rect(screen, GREY, black_button, border_radius=10)
+        pygame.draw.rect(screen, GREY, random_button, border_radius=10)
+
+        white_text = button_font.render("Play as White", True, WHITE)
+        black_text = button_font.render("Play as Black", True, WHITE)
+        random_text = button_font.render("Random Color", True, WHITE)
+
+        screen.blit(white_text, white_text.get_rect(center=white_button.center))
+        screen.blit(black_text, black_text.get_rect(center=black_button.center))
+        screen.blit(random_text, random_text.get_rect(center=random_button.center))
+
+        # --- Gestion des événements ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit(0)
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if white_button.collidepoint(event.pos):
                     return 'WHITE'
-                if black_btn.collidepoint((rel_x, rel_y)):
+                if black_button.collidepoint(event.pos):
                     return 'BLACK'
-                if rand_btn.collidepoint((rel_x, rel_y)):
+                if random_button.collidepoint(event.pos):
                     import random
                     return random.choice(['WHITE', 'BLACK'])
 
-        # draw modal
-        screen.fill(BLACK)
-        screen.blit(modal, rect)
-        modal.blit(title, title.get_rect(center=(modal_w//2, 40)))
-        pygame.draw.rect(modal, (200,200,200), white_btn, border_radius=6)
-        pygame.draw.rect(modal, (200,200,200), black_btn, border_radius=6)
-        pygame.draw.rect(modal, (200,200,200), rand_btn, border_radius=6)
-        modal.blit(font.render('White', True, (0,0,0)), font.render('White', True, (0,0,0)).get_rect(center=white_btn.center))
-        modal.blit(font.render('Black', True, (0,0,0)), font.render('Black', True, (0,0,0)).get_rect(center=black_btn.center))
-        modal.blit(font.render('Random', True, (0,0,0)), font.render('Random', True, (0,0,0)).get_rect(center=rand_btn.center))
-
         pygame.display.flip()
+
 
 def initialize_pvp_game_state():
     """Creates or clears the communication file for a new 1v1 game."""
