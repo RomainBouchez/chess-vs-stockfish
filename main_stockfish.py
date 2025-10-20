@@ -62,6 +62,66 @@ def main_menu():
     
     return selected_mode
 
+
+def choose_color_modal(screen):
+    """
+    Affiche un écran de sélection de couleur avec le même style que le menu principal.
+    Retourne 'WHITE' ou 'BLACK' (ou aléatoire si choisi).
+    """
+    # --- Paramètres d'affichage identiques ---
+    title_font = pygame.font.Font(None, 80)
+    button_font = pygame.font.Font(None, 50)
+
+    button_width = 300
+    button_height = 70
+    spacing = 40
+    button_x = (SCREEN_WIDTH - button_width) // 2
+
+    # --- Boutons pour les choix ---
+    white_button = pygame.Rect(button_x, 300, button_width, button_height)
+    black_button = pygame.Rect(button_x, 400, button_width, button_height)
+    random_button = pygame.Rect(button_x, 500, button_width, button_height)
+
+    running = True
+
+    while running:
+        screen.fill(BLACK)
+
+        # --- Titre ---
+        title_text = title_font.render("Choose your color", True, WHITE)
+        title_rect = title_text.get_rect(center=(SCREEN_WIDTH // 2, 180))
+        screen.blit(title_text, title_rect)
+
+        # --- Dessin des boutons avec le même style que le menu principal ---
+        pygame.draw.rect(screen, GREY, white_button, border_radius=10)
+        pygame.draw.rect(screen, GREY, black_button, border_radius=10)
+        pygame.draw.rect(screen, GREY, random_button, border_radius=10)
+
+        white_text = button_font.render("Play as White", True, WHITE)
+        black_text = button_font.render("Play as Black", True, WHITE)
+        random_text = button_font.render("Random Color", True, WHITE)
+
+        screen.blit(white_text, white_text.get_rect(center=white_button.center))
+        screen.blit(black_text, black_text.get_rect(center=black_button.center))
+        screen.blit(random_text, random_text.get_rect(center=random_button.center))
+
+        # --- Gestion des événements ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit(0)
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if white_button.collidepoint(event.pos):
+                    return 'WHITE'
+                if black_button.collidepoint(event.pos):
+                    return 'BLACK'
+                if random_button.collidepoint(event.pos):
+                    import random
+                    return random.choice(['WHITE', 'BLACK'])
+
+        pygame.display.flip()
+
+
 def initialize_pvp_game_state():
     """Creates or clears the communication file for a new 1v1 game."""
     filename = "next_move.txt"
@@ -80,9 +140,13 @@ if __name__ == "__main__":
 
     if game_mode == 'pve':
         # For PVE, we run the game in the current process as before.
-        # The player is always White in this mode.
-        print("Starting Player vs AI game...")
-        game = Game(mode='pve', player_color='WHITE')
+        # Ask the user which color they want (White/Black/Random)
+        print("Starting Player vs AI game... selecting player color")
+        pygame.display.init()
+        screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+        player_color = choose_color_modal(screen)
+        print(f"Player chose: {player_color}")
+        game = Game(mode='pve', player_color=player_color)
         game.start_game()
 
     elif game_mode == 'pvp':

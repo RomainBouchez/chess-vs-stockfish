@@ -31,8 +31,10 @@ class Game:
         if self.mode == 'pvp':
             window_title = f"Chess 1v1 - {self.player_color.title()} Player"
         else:
-            self.player_color = 'WHITE'
-            window_title = "Chess vs Stockfish"
+            # Keep the player_color passed by the caller (default is WHITE)
+            if not self.player_color:
+                self.player_color = 'WHITE'
+            window_title = f"Chess vs Stockfish - You play as {self.player_color.title()}"
         pygame.display.set_caption(window_title)
 
         try:
@@ -127,7 +129,12 @@ class Game:
                     self.last_read_move = self.read_last_move()
                     self.is_my_turn = False
         else: # PVE Mode
-            status_text = "Your Turn" if self.chess.turn["white"] else "Stockfish is thinking..."
+            # Determine if it's the human's turn based on the validation_board and chosen color
+            human_is_white = (self.player_color == 'WHITE')
+            board_turn_is_white = (self.chess.validation_board.turn == chess.WHITE)
+            is_human_turn = (human_is_white and board_turn_is_white) or (not human_is_white and not board_turn_is_white)
+
+            status_text = "Your Turn" if is_human_turn else "Stockfish is thinking..."
             self.chess.play_turn_pve()
 
         text_surface = turn_font.render(status_text, True, (255, 255, 255))
