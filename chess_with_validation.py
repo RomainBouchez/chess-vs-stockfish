@@ -198,15 +198,19 @@ class Chess(object):
         try:
             move = chess.Move.from_uci(move_uci)
             if move in self.validation_board.legal_moves:
+                # CORRECTION: Vérifier le roque AVANT de push le move
+                is_castling = self.validation_board.is_castling(move)
+                is_en_passant = self.validation_board.is_en_passant(move)
+                
                 self.validation_board.push(move)
-                self.apply_move_to_internal_board(move_uci)
+                self.apply_move_to_internal_board(move_uci, is_castling, is_en_passant)
                 self.check_game_status()
                 return True
             return False
         except Exception:
             return False
 
-    def apply_move_to_internal_board(self, move_uci):
+    def apply_move_to_internal_board(self, move_uci, is_castling, is_en_passant):
         """Applies a validated move to our internal board representation."""
         from_sq, to_sq = move_uci[:2], move_uci[2:4]
         from_file, from_rank = from_sq[0], int(from_sq[1])
@@ -217,15 +221,23 @@ class Chess(object):
         self.piece_location[from_file][from_rank][0] = ""
         
         move = chess.Move.from_uci(move_uci)
-        if self.validation_board.is_castling(move):
-            if to_file == 'g':
-                rook = self.piece_location['h'][from_rank][0]
-                self.piece_location['f'][from_rank][0], self.piece_location['h'][from_rank][0] = rook, ""
-            elif to_file == 'c':
-                rook = self.piece_location['a'][from_rank][0]
-                self.piece_location['d'][from_rank][0], self.piece_location['a'][from_rank][0] = rook, ""
-        elif self.validation_board.is_en_passant(move):
+        
+        # Gérer le roque
+        if is_castling:
+            if to_file == 'g':  # Petit roque (kingside)
+                rook = self.piece_location['h'][to_rank][0]
+                self.piece_location['f'][to_rank][0] = rook
+                self.piece_location['h'][to_rank][0] = ""
+                print(f"Petit roque effectué sur le rang {to_rank}")
+            elif to_file == 'c':  # Grand roque (queenside)
+                rook = self.piece_location['a'][to_rank][0]
+                self.piece_location['d'][to_rank][0] = rook
+                self.piece_location['a'][to_rank][0] = ""
+                print(f"Grand roque effectué sur le rang {to_rank}")
+        # Gérer la prise en passant
+        elif is_en_passant:
             self.piece_location[to_file][from_rank][0] = ""
+        # Gérer la promotion
         elif move.promotion:
             color = "white" if to_rank == 8 else "black"
             promoted_map = {chess.QUEEN: f"{color}_queen", chess.ROOK: f"{color}_rook", chess.BISHOP: f"{color}_bishop", chess.KNIGHT: f"{color}_knight"}
