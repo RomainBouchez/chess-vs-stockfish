@@ -103,9 +103,16 @@ class ChessRobotController:
             self.Z_DOWN_COMMAND = 'M280 P0 S168'
             self.Z_MOVE_DELAY = 0.5
 
+        # Paramètres avancés
+        if 'ADVANCED' in config:
+            self.XY_SETTLE_DELAY = float(config['ADVANCED'].get('xy_settle_delay', '1.0'))
+        else:
+            self.XY_SETTLE_DELAY = 1.0
+
         print(f"[CONFIG] Plateau: {self.SQUARE_SIZE}mm/case, offset=({self.BOARD_OFFSET_X}, {self.BOARD_OFFSET_Y})")
         print(f"[CONFIG] Hauteurs: safe={self.Z_SAFE}, grab={self.Z_GRAB}, lift={self.Z_LIFT}")
         print(f"[CONFIG] Axe Z: UP={self.Z_UP_COMMAND}, DOWN={self.Z_DOWN_COMMAND}")
+        print(f"[CONFIG] Délai stabilisation XY: {self.XY_SETTLE_DELAY}s")
 
     def connect(self) -> bool:
         """
@@ -258,6 +265,7 @@ class ChessRobotController:
         """
         Déplace le robot à une position donnée.
         Utilise G0 pour X et Y, et M280 pour Z.
+        Attend la stabilisation XY avant de bouger Z.
 
         Args:
             x, y, z: Coordonnées en millimètres
@@ -268,6 +276,11 @@ class ChessRobotController:
             self.send_command(f"G0 X{x:.2f} Y{y:.2f} F{feed_rate}")
         else:
             self.send_command(f"G0 X{x:.2f} Y{y:.2f}")
+
+        # IMPORTANT: Attendre que les axes XY atteignent leur position
+        # avant de bouger l'axe Z (évite que la pince descende en vol)
+        print(f"[WAIT] Attente stabilisation XY ({self.XY_SETTLE_DELAY}s)...")
+        time.sleep(self.XY_SETTLE_DELAY)
 
         # Déplacer Z avec M280
         self.move_z(z)
@@ -362,7 +375,108 @@ class ChessRobotController:
         self.move_to_position(capture_x, capture_y, self.Z_GRAB, self.FEED_RATE_WORK)
         self.release_piece()
         self.move_to_position(capture_x, capture_y, self.Z_SAFE, self.FEED_RATE_WORK)
-    
+
+    def parse_next_move(self, move_line: str) -> dict:
+        """
+        Parse le format du fichier next_move.txt: {couleur};{mouvement}
+
+        Args:
+            move_line: Ligne du fichier (ex: "B;e2e4" ou "N;g8f6")
+
+        Returns:
+            Dictionnaire avec 'color' et 'move', ou None si invalide
+
+        Examples:
+            "B;e2e4" -> {'color': 'B', 'move': 'e2e4', 'is_white': True}
+            "N;g8f6" -> {'color': 'N', 'move': 'g8f6', 'is_white': False}
+        """
+        try:
+            parts = move_line.strip().split(';')
+            if len(parts) != 2:
+                print(f"[ERREUR] Format invalide: {move_line} (doit être 'couleur;mouvement')")
+                return None
+
+            color = parts[0].strip().upper()
+            move = parts[1].strip().lower()
+
+            # Vérifier la couleur
+            if color not in ['B', 'N', 'W']:  # B=Blanc, N=Noir, W=White
+                print(f"[ERREUR] Couleur invalide: {color} (doit être B ou N)")
+                return None
+
+            # Vérifier le format du mouvement (au moins 4 caractères: e2e4)
+            if len(move) < 4:
+                print(f"[ERREUR] Mouvement invalide: {move}")
+                return None
+
+            return {
+                'color': color,
+                'move': move,
+                'is_white': color in ['B', 'W']
+            }
+
+        except Exception as e:
+            print(f"[ERREUR] Erreur lors du parsing: {e}")
+            return None
+
+    def monitor_next_move_file(self, filename: str = "next_move.txt", callback=None):
+        """
+        Surveille le fichier next_move.txt et exécute les coups automatiquement.
+        Format attendu: {couleur};{mouvement}
+        Exemple: B;e2e4 (Blanc joue e2 vers e4)
+
+        Args:
+            filename: Nom du fichier à surveiller
+            callback: Fonction appelée après chaque mouvement
+        """
+        last_move = ""
+        last_modified = 0
+
+        # Si un chemin relatif est fourni, le construire depuis le dossier parent
+        if not os.path.isabs(filename):
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            parent_dir = os.path.dirname(current_dir)
+            filename = os.path.join(parent_dir, filename)
+
+        print(f"[ROBOT] Surveillance du fichier {filename}...")
+        print("[INFO] Format attendu: couleur;mouvement (ex: B;e2e4)")
+
+        while not self.stop_monitoring.is_set():
+            try:
+                if os.path.exists(filename):
+                    current_modified = os.path.getmtime(filename)
+
+                    # Si le fichier a été modifié
+                    if current_modified != last_modified:
+                        last_modified = current_modified
+
+                        with open(filename, 'r') as f:
+                            move_line = f.read().strip()
+
+                        # Si c'est un nouveau coup
+                        if move_line and move_line != last_move:
+                            last_move = move_line
+                            print(f"\n[ROBOT] Nouvelle instruction détectée: {move_line}")
+
+                            # Parser le coup
+                            parsed = self.parse_next_move(move_line)
+                            if parsed:
+                                color_name = "Blanc" if parsed['is_white'] else "Noir"
+                                print(f"[ROBOT] Couleur: {color_name}, Coup: {parsed['move']}")
+
+                                # Exécuter le mouvement
+                                # TODO: Intégrer la détection de capture avec votre logique de jeu
+                                self.execute_move(parsed['move'], is_capture=False)
+
+                                if callback:
+                                    callback(parsed)
+
+                time.sleep(0.5)  # Vérifier toutes les 500ms
+
+            except Exception as e:
+                print(f"[ERREUR] Surveillance: {e}")
+                time.sleep(1)
+
     def monitor_bestmove_file(self, filename: str = "bestmove.txt", callback=None):
         """
         Surveille le fichier bestmove.txt et exécute les coups automatiquement.
@@ -414,14 +528,33 @@ class ChessRobotController:
                 time.sleep(1)
     
     def start_monitoring(self, filename: str = "bestmove.txt", callback=None):
-        """Démarre la surveillance dans un thread séparé."""
+        """Démarre la surveillance de bestmove.txt dans un thread séparé."""
         self.stop_monitoring.clear()
-        monitor_thread = Thread(target=self.monitor_bestmove_file, 
+        monitor_thread = Thread(target=self.monitor_bestmove_file,
                                args=(filename, callback))
         monitor_thread.daemon = True
         monitor_thread.start()
         return monitor_thread
-    
+
+    def start_monitoring_next_move(self, filename: str = "next_move.txt", callback=None):
+        """
+        Démarre la surveillance de next_move.txt dans un thread séparé.
+
+        Args:
+            filename: Nom du fichier à surveiller (défaut: next_move.txt)
+            callback: Fonction appelée après chaque mouvement
+
+        Returns:
+            Le thread de surveillance
+        """
+        self.stop_monitoring.clear()
+        monitor_thread = Thread(target=self.monitor_next_move_file,
+                               args=(filename, callback))
+        monitor_thread.daemon = True
+        monitor_thread.start()
+        print(f"[ROBOT] Surveillance de {filename} démarrée")
+        return monitor_thread
+
     def stop(self):
         """Arrête la surveillance et retourne à la position d'origine."""
         self.stop_monitoring.set()
@@ -452,39 +585,58 @@ def main():
     
         print("\nOptions:")
         print("1. Mode surveillance automatique (bestmove.txt)")
-        print("2. Mode test manuel")
-        print("3. Quitter")
-    
+        print("2. Mode surveillance next_move.txt (format: couleur;mouvement)")
+        print("3. Mode test manuel")
+        print("4. Quitter")
+
         choice = input("\nVotre choix: ")
-    
+
         if choice == '1':
             # Mode automatique - surveille bestmove.txt
             def on_move_complete(move):
                 print(f"[INFO] Mouvement {move} terminé - prêt pour le suivant")
-            
+
             print("\n[INFO] Démarrage de la surveillance automatique...")
             print("[INFO] Jouez contre Stockfish et le robot exécutera ses coups")
             print("[INFO] Appuyez sur Ctrl+C pour arrêter\n")
-            
+
             robot.start_monitoring(callback=on_move_complete)
+
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                print("\n[INFO] Arrêt demandé par l'utilisateur")
+
+        elif choice == '2':
+            # Mode surveillance next_move.txt
+            def on_next_move_complete(parsed_move):
+                color_name = "Blanc" if parsed_move['is_white'] else "Noir"
+                print(f"[INFO] {color_name} - {parsed_move['move']} terminé - prêt pour le suivant")
+
+            print("\n[INFO] Démarrage de la surveillance de next_move.txt...")
+            print("[INFO] Format: couleur;mouvement (ex: B;e2e4)")
+            print("[INFO] Appuyez sur Ctrl+C pour arrêter\n")
+
+            robot.start_monitoring_next_move(callback=on_next_move_complete)
             
             try:
                 while True:
                     time.sleep(1)
             except KeyboardInterrupt:
                 print("\n[INFO] Arrêt demandé par l'utilisateur")
-        
-        elif choice == '2':
+
+        elif choice == '3':
             # Mode test manuel
             print("\n[INFO] Mode test - Entrez des coups UCI (ex: e2e4)")
             print("[INFO] Tapez 'quit' pour quitter\n")
-            
+
             while True:
                 move = input("Coup UCI (ou 'quit'): ").strip().lower()
-                
+
                 if move == 'quit':
                     break
-                
+
                 if len(move) >= 4:
                     is_capture = input("Capture? (o/n): ").lower() == 'o'
                     robot.execute_move(move, is_capture)
