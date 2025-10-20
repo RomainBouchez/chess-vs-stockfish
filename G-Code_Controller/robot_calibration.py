@@ -15,6 +15,7 @@ class RobotCalibration:
     def __init__(self):
         self.serial_conn = None
         self.config = self.load_config()
+        self.load_z_commands()
     
     def load_config(self):
         """Charge la configuration depuis robot_config.ini"""
@@ -43,7 +44,40 @@ class RobotCalibration:
             }
         
         return config
-    
+
+    def load_z_commands(self):
+        """Charge les commandes de l'axe Z depuis la configuration."""
+        if 'Z_AXIS' in self.config:
+            self.Z_UP_COMMAND = self.config['Z_AXIS'].get('z_up_command', 'M280 P0 S12')
+            self.Z_DOWN_COMMAND = self.config['Z_AXIS'].get('z_down_command', 'M280 P0 S168')
+            self.Z_MOVE_DELAY = float(self.config['Z_AXIS'].get('z_move_delay', '0.5'))
+        else:
+            # Valeurs par défaut
+            self.Z_UP_COMMAND = 'M280 P0 S12'
+            self.Z_DOWN_COMMAND = 'M280 P0 S168'
+            self.Z_MOVE_DELAY = 0.5
+
+        # Charger aussi Z_GRAB pour la comparaison
+        if 'HEIGHTS' in self.config:
+            self.Z_GRAB = float(self.config['HEIGHTS'].get('z_grab', '5.0'))
+        else:
+            self.Z_GRAB = 5.0
+
+    def get_z_command(self, z_target: float) -> str:
+        """
+        Retourne la commande M280 appropriée pour la hauteur Z cible.
+
+        Args:
+            z_target: Hauteur Z cible
+
+        Returns:
+            Commande M280 (UP ou DOWN)
+        """
+        if z_target <= self.Z_GRAB:
+            return self.Z_DOWN_COMMAND
+        else:
+            return self.Z_UP_COMMAND
+
     def list_serial_ports(self):
         """Liste tous les ports série disponibles."""
         print("\n" + "="*60)
@@ -128,30 +162,33 @@ class RobotCalibration:
         print("\n" + "="*60)
         print("TEST DES MOUVEMENTS")
         print("="*60)
-        
+
         square_size = float(self.config['BOARD']['square_size'])
         offset_x = float(self.config['BOARD']['board_offset_x'])
         offset_y = float(self.config['BOARD']['board_offset_y'])
         z_safe = float(self.config['HEIGHTS']['z_safe'])
-        
+
         # Convention: X = rang (1-8), Y = colonne (a-h)
+        # Chaque test contient maintenant 2 commandes : XY puis Z
         tests = [
-            ("Position d'origine", f"G0 X0 Y0 Z{z_safe}"),
-            ("Case a1 (coin bas-gauche)", f"G0 X{offset_x} Y{offset_y} Z{z_safe}"),
-            ("Case h1 (coin bas-droite)", f"G0 X{offset_x} Y{offset_y + 7*square_size} Z{z_safe}"),
-            ("Case a8 (coin haut-gauche)", f"G0 X{offset_x + 7*square_size} Y{offset_y} Z{z_safe}"),
-            ("Case h8 (coin haut-droite)", f"G0 X{offset_x + 7*square_size} Y{offset_y + 7*square_size} Z{z_safe}"),
-            ("Centre (e4)", f"G0 X{offset_x + 3*square_size} Y{offset_y + 4*square_size} Z{z_safe}"),
-            ("Retour origine", f"G0 X0 Y0 Z{z_safe}")
+            ("Position d'origine", [f"G0 X0 Y0", self.get_z_command(z_safe)]),
+            ("Case a1 (coin bas-gauche)", [f"G0 X{offset_x} Y{offset_y}", self.get_z_command(z_safe)]),
+            ("Case h1 (coin bas-droite)", [f"G0 X{offset_x} Y{offset_y + 7*square_size}", self.get_z_command(z_safe)]),
+            ("Case a8 (coin haut-gauche)", [f"G0 X{offset_x + 7*square_size} Y{offset_y}", self.get_z_command(z_safe)]),
+            ("Case h8 (coin haut-droite)", [f"G0 X{offset_x + 7*square_size} Y{offset_y + 7*square_size}", self.get_z_command(z_safe)]),
+            ("Centre (e4)", [f"G0 X{offset_x + 3*square_size} Y{offset_y + 4*square_size}", self.get_z_command(z_safe)]),
+            ("Retour origine", [f"G0 X0 Y0", self.get_z_command(z_safe)])
         ]
-        
-        for description, command in tests:
+
+        for description, commands in tests:
             print(f"\n[TEST] {description}")
-            print(f"Commande: {command}")
-            
+            print(f"Commandes: {commands[0]} puis {commands[1]}")
+
             input("Appuyez sur Entrée pour exécuter (ou Ctrl+C pour arrêter)...")
-            self.send_test_command(command)
-            time.sleep(1)
+            for cmd in commands:
+                self.send_test_command(cmd)
+                time.sleep(self.Z_MOVE_DELAY if 'M280' in cmd else 0.5)
+            time.sleep(0.5)
     
     def test_gripper(self):
         """Teste le système de préhension."""
@@ -303,16 +340,20 @@ class RobotCalibration:
         print("="*60)
         print("""
 MOUVEMENTS:
-  G0 X<x> Y<y> Z<z>  : Déplacement rapide
-  G1 X<x> Y<y> Z<z>  : Déplacement linéaire
+  G0 X<x> Y<y>       : Déplacement rapide XY
+  G1 X<x> Y<y>       : Déplacement linéaire XY
   G28                : Retour à l'origine (homing)
   G90                : Mode absolu
   G91                : Mode relatif
 
+AXE Z (SERVO):
+  M280 P0 S12        : Monter l'axe Z
+  M280 P0 S168       : Descendre l'axe Z
+
 BROCHE/PRÉHENSION:
   M3 S<speed>        : Activer broche (électro-aimant)
   M5                 : Arrêter broche
-  M280 P<pin> S<angle> : Contrôler servo
+  M280 P<pin> S<angle> : Contrôler servo (générique)
   
 VITESSE:
   F<speed>           : Définir vitesse (mm/min)
@@ -474,16 +515,17 @@ def test_chess_move(calibrator):
     print(f"\nDéplacement: {from_square} ({from_x:.1f}, {from_y:.1f}) → {to_square} ({to_x:.1f}, {to_y:.1f})")
     input("Appuyez sur Entrée pour commencer...")
     
-    # Séquence de mouvement
+    # Séquence de mouvement (XY avec G0, Z avec M280)
     steps = [
-        (f"Aller au-dessus de {from_square}", f"G0 X{from_x:.2f} Y{from_y:.2f} Z{z_safe}"),
-        ("Descendre", f"G0 Z{z_grab}"),
+        (f"Aller au-dessus de {from_square}", f"G0 X{from_x:.2f} Y{from_y:.2f}"),
+        (f"Z position safe", calibrator.get_z_command(z_safe)),
+        ("Descendre", calibrator.get_z_command(z_grab)),
         ("Attraper la pièce", grab_cmd),
-        ("Lever", f"G0 Z{z_lift}"),
-        (f"Se déplacer vers {to_square}", f"G0 X{to_x:.2f} Y{to_y:.2f} Z{z_lift}"),
-        ("Descendre", f"G0 Z{z_grab}"),
+        ("Lever", calibrator.get_z_command(z_lift)),
+        (f"Se déplacer vers {to_square}", f"G0 X{to_x:.2f} Y{to_y:.2f}"),
+        ("Descendre", calibrator.get_z_command(z_grab)),
         ("Relâcher la pièce", release_cmd),
-        ("Remonter", f"G0 Z{z_safe}"),
+        ("Remonter", calibrator.get_z_command(z_safe)),
     ]
     
     for i, (description, command) in enumerate(steps, 1):

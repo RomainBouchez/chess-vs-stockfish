@@ -92,8 +92,20 @@ class ChessRobotController:
         self.GRAB_DELAY = float(config['GRIPPER']['grab_delay'])
         self.RELEASE_DELAY = float(config['GRIPPER']['release_delay'])
 
+        # Axe Z (servo)
+        if 'Z_AXIS' in config:
+            self.Z_UP_COMMAND = config['Z_AXIS'].get('z_up_command', 'M280 P0 S12')
+            self.Z_DOWN_COMMAND = config['Z_AXIS'].get('z_down_command', 'M280 P0 S168')
+            self.Z_MOVE_DELAY = float(config['Z_AXIS'].get('z_move_delay', '0.5'))
+        else:
+            # Valeurs par défaut
+            self.Z_UP_COMMAND = 'M280 P0 S12'
+            self.Z_DOWN_COMMAND = 'M280 P0 S168'
+            self.Z_MOVE_DELAY = 0.5
+
         print(f"[CONFIG] Plateau: {self.SQUARE_SIZE}mm/case, offset=({self.BOARD_OFFSET_X}, {self.BOARD_OFFSET_Y})")
         print(f"[CONFIG] Hauteurs: safe={self.Z_SAFE}, grab={self.Z_GRAB}, lift={self.Z_LIFT}")
+        print(f"[CONFIG] Axe Z: UP={self.Z_UP_COMMAND}, DOWN={self.Z_DOWN_COMMAND}")
 
     def connect(self) -> bool:
         """
@@ -226,18 +238,39 @@ class ChessRobotController:
 
         return (x, y)
     
+    def move_z(self, z_target: float):
+        """
+        Déplace l'axe Z en utilisant les commandes servo M280.
+
+        Args:
+            z_target: Hauteur cible (compare avec Z_GRAB pour déterminer UP/DOWN)
+        """
+        # Si z_target est proche de Z_GRAB, descendre, sinon monter
+        if z_target <= self.Z_GRAB:
+            print(f"[Z-AXIS] Descente (Z={z_target:.2f}mm)")
+            self.send_command(self.Z_DOWN_COMMAND)
+        else:
+            print(f"[Z-AXIS] Montée (Z={z_target:.2f}mm)")
+            self.send_command(self.Z_UP_COMMAND)
+        time.sleep(self.Z_MOVE_DELAY)
+
     def move_to_position(self, x: float, y: float, z: float, feed_rate: int = None):
         """
         Déplace le robot à une position donnée.
-        
+        Utilise G0 pour X et Y, et M280 pour Z.
+
         Args:
             x, y, z: Coordonnées en millimètres
-            feed_rate: Vitesse de déplacement (optionnelle)
+            feed_rate: Vitesse de déplacement pour X et Y (optionnelle)
         """
+        # Déplacer X et Y avec G0
         if feed_rate:
-            self.send_command(f"G0 X{x:.2f} Y{y:.2f} Z{z:.2f} F{feed_rate}")
+            self.send_command(f"G0 X{x:.2f} Y{y:.2f} F{feed_rate}")
         else:
-            self.send_command(f"G0 X{x:.2f} Y{y:.2f} Z{z:.2f}")
+            self.send_command(f"G0 X{x:.2f} Y{y:.2f}")
+
+        # Déplacer Z avec M280
+        self.move_z(z)
     
     def grab_piece(self):
         """
