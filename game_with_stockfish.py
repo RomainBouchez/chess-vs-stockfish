@@ -3,6 +3,7 @@ import sys
 import pygame
 import chess
 from pygame.locals import *
+from threading import Event
 
 try:
     from chess_with_validation import Chess
@@ -16,11 +17,15 @@ except ImportError as e:
 
 
 class Game:
-    def __init__(self, mode='pve', player_color='WHITE'):
+    def __init__(self, mode='pve', player_color='WHITE', enable_robot=False):
         self.mode = mode
         self.player_color = player_color.upper()
         self.running = True
-        
+        self.enable_robot = enable_robot
+        self.robot_controller = None
+        self.robot_thread = None
+        self.robot_move_complete_event = Event()
+
         screen_width = 640
         screen_height = 750
         self.resources = "res"
@@ -57,6 +62,87 @@ class Game:
             with open(self.move_file, "r") as f: return f.read().strip()
         except IOError: return ""
 
+    def init_robot(self):
+        """Initialise et démarre le robot pour exécuter les coups physiquement."""
+        try:
+            # Import local pour éviter les erreurs si le module n'existe pas
+            import sys
+            robot_path = os.path.join(os.path.dirname(__file__), 'G-Code_Controller')
+            if robot_path not in sys.path:
+                sys.path.insert(0, robot_path)
+
+            from robot_chess_controller import ChessRobotController
+
+            print("\n" + "="*60)
+            print("INITIALISATION DU ROBOT")
+            print("="*60)
+
+            # Demander le port série (ou utiliser une config par défaut)
+            # Pour l'instant, on utilise COM3 par défaut
+            # TODO: Ajouter une config ou un menu de sélection
+            self.robot_controller = ChessRobotController(port='COM3', baudrate=115200)
+
+            if self.robot_controller.connect():
+                print("[ROBOT] Connexion réussie !")
+                self.robot_controller.home_robot()
+
+                # Démarrer la surveillance du fichier next_move.txt
+                print("[ROBOT] Démarrage de la surveillance de next_move.txt...")
+                self.robot_thread = self.robot_controller.start_monitoring_next_move(
+                    filename="next_move.txt",
+                    callback=self.on_robot_move_complete,
+                    event=self.robot_move_complete_event
+                )
+                print("[ROBOT] Robot prêt à jouer ! ✓")
+            else:
+                print("[ERREUR] Impossible de se connecter au robot")
+                self.enable_robot = False
+                self.robot_controller = None
+
+        except Exception as e:
+            print(f"[ERREUR] Initialisation robot échouée: {e}")
+            import traceback
+            traceback.print_exc()
+            self.enable_robot = False
+            self.robot_controller = None
+
+    def on_robot_move_complete(self, parsed_move):
+        """Callback appelé quand le robot termine un coup."""
+        color_name = "Blanc" if parsed_move['is_white'] else "Noir"
+        print(f"[CALLBACK] {color_name} - {parsed_move['move']} terminé")
+
+    def wait_for_robot_move(self, timeout=30):
+        """
+        Attend que le robot termine le coup en cours.
+
+        Args:
+            timeout: Temps d'attente maximum en secondes (défaut: 30s)
+
+        Returns:
+            True si le robot a terminé, False si timeout
+        """
+        if not self.enable_robot or not self.robot_controller:
+            return True  # Pas de robot, on continue
+
+        print("[SYNC] Attente que le robot termine le coup...")
+        result = self.robot_move_complete_event.wait(timeout=timeout)
+
+        if result:
+            print("[SYNC] Robot a terminé le coup ✓")
+            # Réinitialiser l'event pour le prochain coup
+            self.robot_move_complete_event.clear()
+        else:
+            print(f"[ERREUR] Timeout: le robot n'a pas terminé en {timeout}s")
+
+        return result
+
+    def stop_robot(self):
+        """Arrête proprement le robot."""
+        if self.robot_controller:
+            print("\n[ROBOT] Arrêt du robot...")
+            self.robot_controller.stop()
+            self.robot_controller = None
+
     def start_game(self):
         self.board_offset_x, self.board_offset_y = 0, 50
         self.board_dimensions = (self.board_offset_x, self.board_offset_y)
@@ -77,7 +163,14 @@ class Game:
         ]
 
         pieces_src = os.path.join(self.resources, "pieces.png")
-        self.chess = Chess(self.screen, pieces_src, self.board_locations, square_length, self.mode, self.player_color)
+
+        # Passer le callback d'attente robot si le robot est activé
+        robot_wait_callback = self.wait_for_robot_move if self.enable_robot else None
+        self.chess = Chess(self.screen, pieces_src, self.board_locations, square_length, self.mode, self.player_color, robot_wait_callback)
+
+        # Initialiser le robot si activé
+        if self.enable_robot:
+            self.init_robot()
 
         while self.running:
             self.clock.tick(30)
@@ -105,7 +198,7 @@ class Game:
         if current_move_in_file and current_move_in_file != self.last_read_move:
             self.last_read_move = current_move_in_file
             try:
-                player, move_uci = current_move_in_file.split(';')
+                player, move_uci, capture_flag = current_move_in_file.split(';')
                 opponent_color = 'BLACK' if self.player_color == 'WHITE' else 'WHITE'
                 if player == opponent_color[0]:
                     print(f"[{self.player_color}] Detected opponent's move: {move_uci}")
@@ -114,32 +207,104 @@ class Game:
             except ValueError:
                 print(f"[{self.player_color}] WARNING: Malformed move in file: '{current_move_in_file}'")
 
+    def draw_captured_pieces(self):
+        """Affiche les pièces capturées sur le côté du plateau."""
+        # Définir un ordre de tri pour regrouper les pièces par type
+        piece_order = {'pawn': 1, 'knight': 2, 'bishop': 3, 'rook': 4, 'queen': 5}
+
+        # Trier les pièces capturées
+        white_captured_sorted = sorted(self.chess.white_captured,
+                                      key=lambda p: piece_order.get(p.split('_')[1], 0))
+        black_captured_sorted = sorted(self.chess.black_captured,
+                                      key=lambda p: piece_order.get(p.split('_')[1], 0))
+
+        # Taille réduite pour les pièces capturées
+        piece_size = 30
+        x_offset = 500  # Position à droite du plateau
+
+        # Afficher les pièces noires capturées (par les blancs) en haut
+        y_black = 60
+        for i, piece_name in enumerate(white_captured_sorted):
+            x_pos = x_offset + (i % 4) * piece_size
+            y_pos = y_black + (i // 4) * piece_size
+            scaled_pos = (x_pos, y_pos)
+            # Récupérer l'index de la pièce et l'afficher
+            piece_index = self.chess.chess_pieces.pieces[piece_name]
+            cell = self.chess.chess_pieces.cells[piece_index]
+            piece_img = self.chess.chess_pieces.spritesheet.subsurface(cell)
+            piece_img = pygame.transform.scale(piece_img, (piece_size, piece_size))
+            self.screen.blit(piece_img, scaled_pos)
+
+        # Afficher les pièces blanches capturées (par les noirs) en bas
+        y_white = 650
+        for i, piece_name in enumerate(black_captured_sorted):
+            x_pos = x_offset + (i % 4) * piece_size
+            y_pos = y_white + (i // 4) * piece_size
+            scaled_pos = (x_pos, y_pos)
+            piece_index = self.chess.chess_pieces.pieces[piece_name]
+            cell = self.chess.chess_pieces.cells[piece_index]
+            piece_img = self.chess.chess_pieces.spritesheet.subsurface(cell)
+            piece_img = pygame.transform.scale(piece_img, (piece_size, piece_size))
+            self.screen.blit(piece_img, scaled_pos)
+
     def game(self):
         self.screen.fill((0, 0, 0))
         self.screen.blit(self.board_img, self.board_dimensions)
         is_flipped = (self.player_color == 'BLACK')
         turn_font = pygame.font.SysFont("sans-serif", 24)
         status_text = ""
+        
+        # Variable pour savoir si on doit attendre le robot après cette frame
+        move_made_this_frame = False
 
         if self.mode == 'pvp':
             if not self.is_my_turn: self.check_for_opponent_move()
             status_text = "Your Turn" if self.is_my_turn else "Waiting for Opponent..."
             if self.is_my_turn:
+                # handle_human_move retourne True si un coup est joué
                 if self.chess.handle_human_move(self.player_color.lower(), is_flipped):
                     self.last_read_move = self.read_last_move()
                     self.is_my_turn = False
+                    move_made_this_frame = True
         else: # PVE Mode
-            # Determine if it's the human's turn based on the validation_board and chosen color
             human_is_white = (self.player_color == 'WHITE')
             board_turn_is_white = (self.chess.validation_board.turn == chess.WHITE)
             is_human_turn = (human_is_white and board_turn_is_white) or (not human_is_white and not board_turn_is_white)
 
             status_text = "Your Turn" if is_human_turn else "Stockfish is thinking..."
-            self.chess.play_turn_pve()
+            
+            # play_turn_pve retourne True si un coup a été joué (par le joueur ou l'IA)
+            if self.chess.play_turn_pve():
+                move_made_this_frame = True
 
+        # --- NOUVEAU BLOC DE SYNCHRONISATION AVEC LE ROBOT ---
+        if self.enable_robot and move_made_this_frame:
+            # 1. Préparer le signal pour la prochaine attente
+            self.robot_move_complete_event.clear()
+
+            # 2. Afficher un message d'attente à l'écran
+            wait_text = "Robot is moving..."
+            wait_surf = turn_font.render(wait_text, True, (255, 255, 0)) # Jaune
+            
+            # Dessiner le reste de l'écran pour que tout soit à jour
+            self.chess.draw_pieces(is_flipped)
+            self.draw_captured_pieces()
+            self.screen.blit(wait_surf, ((self.screen.get_width() - wait_surf.get_width()) // 2, 15))
+            pygame.display.flip() # Forcer la mise à jour de l'écran avec le message
+
+            # 3. Mettre le jeu en pause et attendre le signal du robot
+            print("[GAME] Un coup a été joué. Mise en pause du jeu en attente du robot...")
+            # Le .wait() bloque l'exécution jusqu'à ce que l'event soit .set() par le robot
+            self.robot_move_complete_event.wait(timeout=60.0) # Timeout de 60s par sécurité
+            print("[GAME] Signal du robot reçu. Le jeu reprend.")
+
+        # Affichage normal du statut (sera écrasé par le message d'attente si nécessaire)
         text_surface = turn_font.render(status_text, True, (255, 255, 255))
         self.screen.blit(text_surface, ((self.screen.get_width() - text_surface.get_width()) // 2, 15))
+        
+        # Redessiner le tout au cas où l'écran n'a pas été mis à jour pendant l'attente
         self.chess.draw_pieces(is_flipped)
+        self.draw_captured_pieces()
 
     # --- UI UPDATED: This function has been redesigned ---
     def pve_menu(self):

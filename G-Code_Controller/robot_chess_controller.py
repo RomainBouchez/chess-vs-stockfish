@@ -4,6 +4,7 @@ import os
 import configparser
 from threading import Thread, Event
 from typing import Tuple, Optional
+from threading import Thread, Event
 
 class ChessRobotController:
     """
@@ -30,6 +31,12 @@ class ChessRobotController:
         self.load_config(config_file)
 
         self.capture_count = 0
+        self.white_capture_count = 0  # Pièces blanches capturées
+        self.black_capture_count = 0  # Pièces noires capturées
+
+        # Tracking de l'état du plateau pour connaître la couleur des pièces
+        self.board_state = {}
+        self.init_board_state()
 
     def load_config(self, config_file: str):
         """Charge la configuration depuis robot_config.ini"""
@@ -195,6 +202,44 @@ class ChessRobotController:
             print(f"[ERREUR] Envoi commande: {e}")
             return False
     
+    def init_board_state(self):
+        """Initialise l'état du plateau avec la position de départ des échecs."""
+        # Pièces blanches (rang 1 et 2)
+        for file in 'abcdefgh':
+            self.board_state[f"{file}2"] = "white"  # Pions blancs
+        self.board_state.update({
+            "a1": "white", "h1": "white",  # Tours
+            "b1": "white", "g1": "white",  # Cavaliers
+            "c1": "white", "f1": "white",  # Fous
+            "d1": "white", "e1": "white"   # Reine et Roi
+        })
+
+        # Pièces noires (rang 7 et 8)
+        for file in 'abcdefgh':
+            self.board_state[f"{file}7"] = "black"  # Pions noirs
+        self.board_state.update({
+            "a8": "black", "h8": "black",  # Tours
+            "b8": "black", "g8": "black",  # Cavaliers
+            "c8": "black", "f8": "black",  # Fous
+            "d8": "black", "e8": "black"   # Reine et Roi
+        })
+
+    def update_board_state(self, move_uci: str):
+        """
+        Met à jour l'état du plateau après un coup.
+
+        Args:
+            move_uci: Coup UCI (ex: 'e2e4')
+        """
+        from_square = move_uci[:2]
+        to_square = move_uci[2:4]
+
+        # Déplacer la pièce
+        if from_square in self.board_state:
+            piece_color = self.board_state[from_square]
+            self.board_state[to_square] = piece_color
+            del self.board_state[from_square]
+
     def home_robot(self):
         """
         Initialise la position du robot :
@@ -298,78 +343,273 @@ class ChessRobotController:
         self.send_command(self.RELEASE_COMMAND)
         time.sleep(self.RELEASE_DELAY)
     
-    def execute_move(self, uci_move: str, is_capture: bool = False):
+    def execute_castling(self, king_from: str, king_to: str, rook_from: str, rook_to: str):
         """
-        Exécute un mouvement d'échecs sur le robot.
-        
+        Exécute un roque (roi + tour).
+
         Args:
-            uci_move: Coup au format UCI (ex: 'e2e4', 'g1f3')
-            is_capture: True si c'est une capture
+            king_from: Case de départ du roi (ex: 'e1')
+            king_to: Case d'arrivée du roi (ex: 'g1')
+            rook_from: Case de départ de la tour (ex: 'h1')
+            rook_to: Case d'arrivée de la tour (ex: 'f1')
         """
-        if len(uci_move) < 4:
-            print(f"[ERREUR] Format UCI invalide: {uci_move}")
-            return
-        
+        print(f"[ROBOT] === EXÉCUTION DU ROQUE ===")
+
+        # 1. Déplacer le roi
+        print(f"[ROBOT] Étape 1/2 : Déplacement du roi {king_from} → {king_to}")
+        king_from_x, king_from_y = self.uci_to_coordinates(king_from)
+        king_to_x, king_to_y = self.uci_to_coordinates(king_to)
+
+        self.move_to_position(king_from_x, king_from_y, self.Z_SAFE, self.FEED_RATE_TRAVEL)
+        self.move_to_position(king_from_x, king_from_y, self.Z_GRAB, self.FEED_RATE_WORK)
+        self.grab_piece()
+        self.move_to_position(king_from_x, king_from_y, self.Z_LIFT, self.FEED_RATE_WORK)
+        self.move_to_position(king_to_x, king_to_y, self.Z_LIFT, self.FEED_RATE_TRAVEL)
+        self.move_to_position(king_to_x, king_to_y, self.Z_GRAB, self.FEED_RATE_WORK)
+        self.release_piece()
+        self.move_to_position(king_to_x, king_to_y, self.Z_SAFE, self.FEED_RATE_WORK)
+
+        # 2. Déplacer la tour
+        print(f"[ROBOT] Étape 2/2 : Déplacement de la tour {rook_from} → {rook_to}")
+        rook_from_x, rook_from_y = self.uci_to_coordinates(rook_from)
+        rook_to_x, rook_to_y = self.uci_to_coordinates(rook_to)
+
+        self.move_to_position(rook_from_x, rook_from_y, self.Z_SAFE, self.FEED_RATE_TRAVEL)
+        self.move_to_position(rook_from_x, rook_from_y, self.Z_GRAB, self.FEED_RATE_WORK)
+        self.grab_piece()
+        self.move_to_position(rook_from_x, rook_from_y, self.Z_LIFT, self.FEED_RATE_WORK)
+        self.move_to_position(rook_to_x, rook_to_y, self.Z_LIFT, self.FEED_RATE_TRAVEL)
+        self.move_to_position(rook_to_x, rook_to_y, self.Z_GRAB, self.FEED_RATE_WORK)
+        self.release_piece()
+        self.move_to_position(rook_to_x, rook_to_y, self.Z_SAFE, self.FEED_RATE_WORK)
+
+        # 3. Mettre à jour le board_state
+        king_color = self.board_state.get(king_from)
+        self.board_state[king_to] = king_color
+        self.board_state[rook_to] = king_color
+        del self.board_state[king_from]
+        del self.board_state[rook_from]
+
+        print(f"[ROBOT] Roque terminé ✓")
+
+    def is_castling(self, uci_move: str) -> tuple:
+        """
+        Détermine si un coup est un roque et retourne les infos nécessaires.
+
+        Args:
+            uci_move: Coup UCI (ex: 'e1g1' pour petit roque blanc)
+
+        Returns:
+            (is_castling, rook_from, rook_to) ou (False, None, None)
+        """
         from_square = uci_move[:2]
         to_square = uci_move[2:4]
-        
-        print(f"\n[ROBOT] Exécution du coup: {from_square} → {to_square}")
-        
-        # Convertir en coordonnées physiques
+
+        # Petit roque blanc (e1g1)
+        if from_square == 'e1' and to_square == 'g1':
+            return (True, 'h1', 'f1')
+        # Grand roque blanc (e1c1)
+        elif from_square == 'e1' and to_square == 'c1':
+            return (True, 'a1', 'd1')
+        # Petit roque noir (e8g8)
+        elif from_square == 'e8' and to_square == 'g8':
+            return (True, 'h8', 'f8')
+        # Grand roque noir (e8c8)
+        elif from_square == 'e8' and to_square == 'c8':
+            return (True, 'a8', 'd8')
+
+        return (False, None, None)
+
+    def is_en_passant(self, uci_move: str) -> str:
+        """
+        Détermine si un coup est une prise en passant.
+
+        Args:
+            uci_move: Coup UCI (ex: 'e5d6')
+
+        Returns:
+            Case du pion capturé (ex: 'd5') ou None
+        """
+        from_square = uci_move[:2]
+        to_square = uci_move[2:4]
+
+        # Vérifier si c'est un pion
+        piece_color = self.board_state.get(from_square)
+        if piece_color is None:
+            return None
+
+        # Prise en passant : mouvement diagonal d'un pion vers une case vide
+        from_file, from_rank = from_square[0], int(from_square[1])
+        to_file, to_rank = to_square[0], int(to_square[1])
+
+        # Mouvement diagonal
+        if from_file != to_file:
+            # Case de destination vide dans board_state
+            if to_square not in self.board_state:
+                # C'est probablement une prise en passant
+                # Le pion capturé est sur le même rang que la case de départ
+                captured_pawn_square = f"{to_file}{from_rank}"
+                if captured_pawn_square in self.board_state:
+                    return captured_pawn_square
+
+        return None
+
+    # Dans le fichier robot_chess_controller.py
+
+    def execute_move(self, uci_move: str, is_capture: bool = False):
+        """
+        Exécute un mouvement d'échecs sur le robot, en gérant les captures,
+        le roque et la prise en passant.
+
+        Args:
+            uci_move: Coup au format UCI (ex: 'e2e4', 'g1f3')
+            is_capture: True si le coup est une capture (fourni par le moteur de jeu)
+        """
+        # --- 1. Validation de base ---
+        if len(uci_move) < 4:
+            print(f"[ROBOT] [ERREUR] Format UCI invalide reçu: '{uci_move}'. Annulation du coup.")
+            return
+
+        from_square = uci_move[:2]
+        to_square = uci_move[2:4]
+        print(f"\n[ROBOT] [INFO] Reçu nouvelle instruction: {from_square} → {to_square} (Capture: {is_capture})")
+
+        # --- 2. Gestion des coups spéciaux (Roque) ---
+        is_castling_move, rook_from, rook_to = self.is_castling(uci_move)
+        if is_castling_move:
+            print(f"[ROBOT] [INFO] Coup spécial détecté: ROQUE.")
+            self.execute_castling(from_square, to_square, rook_from, rook_to)
+            print(f"[ROBOT] [SUCCESS] Roque {uci_move} terminé.")
+            return
+
+        # --- 3. Gestion de la capture (si nécessaire) ---
+        captured_piece_square = None  # Retiendra la case de la pièce capturée
+
+        # Cas spécial : Prise en Passant
+        en_passant_square = self.is_en_passant(uci_move)
+        if en_passant_square:
+            print(f"[ROBOT] [INFO] Coup spécial détecté: PRISE EN PASSANT. Pion capturé en {en_passant_square}.")
+            captured_piece_square = en_passant_square
+        # Cas d'une capture normale
+        elif is_capture:
+            print("[ROBOT] [INFO] Capture normale détectée.")
+            captured_piece_square = to_square
+
+        # S'il y a bien une pièce à capturer, on la retire du plateau en premier
+        if captured_piece_square:
+            captured_piece_color = self.board_state.get(captured_piece_square)
+            
+            # Sécurité : vérifier que le robot pense bien qu'il y a une pièce à cet endroit
+            if captured_piece_color is None:
+                print(f"[ROBOT] [ERREUR] Désynchronisation! Le jeu a signalé une capture en {captured_piece_square}, mais le robot ne voit aucune pièce à cet endroit.")
+            else:
+                print(f"[ROBOT] [ACTION] Début de la procédure de capture pour la pièce {captured_piece_color} en {captured_piece_square}.")
+                is_white_captured = (captured_piece_color == "white")
+                cap_x, cap_y = self.uci_to_coordinates(captured_piece_square)
+                
+                # Séquence de retrait de la pièce capturée
+                self.remove_captured_piece(cap_x, cap_y, is_white_piece=is_white_captured)
+                
+                # Mettre à jour l'état du plateau IMMÉDIATEMENT pour la pièce capturée
+                del self.board_state[captured_piece_square]
+                print(f"[ROBOT] [STATE] Pièce en {captured_piece_square} retirée de l'état interne.")
+
+        # --- 4. Exécution du mouvement principal de la pièce ---
         from_x, from_y = self.uci_to_coordinates(from_square)
         to_x, to_y = self.uci_to_coordinates(to_square)
-        
-        # Si c'est une capture, déplacer d'abord la pièce capturée
-        if is_capture:
-            print("[ROBOT] Capture détectée - déplacement de la pièce adverse")
-            self.remove_captured_piece(to_x, to_y)
-        
+
+        print(f"[ROBOT] [ACTION] Déplacement de la pièce de {from_square} à {to_square}.")
+
+        # Séquence "Pick and Place"
         # 1. Aller au-dessus de la pièce source
-        print(f"[ROBOT] Position de départ: {from_square}")
         self.move_to_position(from_x, from_y, self.Z_SAFE, self.FEED_RATE_TRAVEL)
-        
         # 2. Descendre pour attraper
         self.move_to_position(from_x, from_y, self.Z_GRAB, self.FEED_RATE_WORK)
-        
         # 3. Activer la préhension
         self.grab_piece()
-        
         # 4. Remonter avec la pièce
         self.move_to_position(from_x, from_y, self.Z_LIFT, self.FEED_RATE_WORK)
-        
         # 5. Se déplacer vers la destination
-        print(f"[ROBOT] Position d'arrivée: {to_square}")
         self.move_to_position(to_x, to_y, self.Z_LIFT, self.FEED_RATE_TRAVEL)
-        
         # 6. Descendre pour déposer
         self.move_to_position(to_x, to_y, self.Z_GRAB, self.FEED_RATE_WORK)
-        
         # 7. Relâcher la pièce
         self.release_piece()
-        
-        # 8. Remonter
+        # 8. Remonter à une hauteur de sécurité
         self.move_to_position(to_x, to_y, self.Z_SAFE, self.FEED_RATE_WORK)
-        
-        print(f"[ROBOT] Coup {uci_move} terminé ✓")
-    
-    def remove_captured_piece(self, x: float, y: float):
+
+        # --- 5. Mise à jour de l'état interne du plateau pour la pièce déplacée ---
+        self.update_board_state(uci_move)
+        print(f"[ROBOT] [STATE] État interne mis à jour pour le coup {uci_move}.")
+        print(f"[ROBOT] [SUCCESS] Coup {uci_move} terminé ✓")
+    def get_capture_zone_position(self, is_white_piece: bool):
         """
-        Retire une pièce capturée et la place dans la zone de capture.
+        Calcule la position de la zone de capture pour une pièce.
+        Les pièces sont placées à côté du plateau, organisées par couleur.
+
+        Args:
+            is_white_piece: True si c'est une pièce blanche capturée, False pour noire
+
+        Returns:
+            tuple: (capture_x, capture_y) en mm
+        """
+        # Calculer la taille du plateau
+        board_size = self.SQUARE_SIZE * 8
+
+        if is_white_piece:
+            # Pièces blanches capturées : côté droit du plateau (h1-h8)
+            base_x = self.BOARD_OFFSET_X
+            base_y = self.BOARD_OFFSET_Y + board_size + self.CAPTURE_SPACING  # À droite du plateau
+
+            # Organiser en grille : 4 colonnes
+            col = self.white_capture_count % 4
+            row = self.white_capture_count // 4
+
+            capture_x = base_x + row * self.CAPTURE_SPACING
+            capture_y = base_y + col * self.CAPTURE_SPACING
+
+            self.white_capture_count += 1
+        else:
+            # Pièces noires capturées : côté gauche du plateau (a1-a8)
+            base_x = self.BOARD_OFFSET_X
+            base_y = self.BOARD_OFFSET_Y - self.CAPTURE_SPACING  # À gauche du plateau
+
+            # Organiser en grille : 4 colonnes
+            col = self.black_capture_count % 4
+            row = self.black_capture_count // 4
+
+            capture_x = base_x + row * self.CAPTURE_SPACING
+            capture_y = base_y - col * self.CAPTURE_SPACING
+
+            self.black_capture_count += 1
+
+        return (capture_x, capture_y)
+
+    def remove_captured_piece(self, x: float, y: float, is_white_piece: bool = None):
+        """
+        Retire une pièce capturée et la place dans la zone de capture à côté du plateau.
 
         Args:
             x, y: Coordonnées de la pièce à capturer
+            is_white_piece: True si pièce blanche, False si noire, None pour auto-détection (obsolète)
         """
-        # Position dans la zone de capture
-        capture_x = self.CAPTURE_ZONE_X + (self.capture_count % 8) * self.CAPTURE_SPACING
-        capture_y = self.CAPTURE_ZONE_Y + (self.capture_count // 8) * self.CAPTURE_SPACING
-        self.capture_count += 1
-        
+        # Si is_white_piece n'est pas fourni, utiliser l'ancien système (rétrocompatibilité)
+        if is_white_piece is None:
+            capture_x = self.CAPTURE_ZONE_X + (self.capture_count % 8) * self.CAPTURE_SPACING
+            capture_y = self.CAPTURE_ZONE_Y + (self.capture_count // 8) * self.CAPTURE_SPACING
+            self.capture_count += 1
+        else:
+            # Nouveau système : placer à côté du plateau selon la couleur
+            capture_x, capture_y = self.get_capture_zone_position(is_white_piece)
+
+        print(f"[ROBOT] Déplacement pièce capturée vers zone ({capture_x:.1f}, {capture_y:.1f})")
+
         # Aller chercher la pièce
         self.move_to_position(x, y, self.Z_SAFE, self.FEED_RATE_TRAVEL)
         self.move_to_position(x, y, self.Z_GRAB, self.FEED_RATE_WORK)
         self.grab_piece()
         self.move_to_position(x, y, self.Z_LIFT, self.FEED_RATE_WORK)
-        
+
         # Déplacer vers la zone de capture
         self.move_to_position(capture_x, capture_y, self.Z_LIFT, self.FEED_RATE_TRAVEL)
         self.move_to_position(capture_x, capture_y, self.Z_GRAB, self.FEED_RATE_WORK)
@@ -378,30 +618,37 @@ class ChessRobotController:
 
     def parse_next_move(self, move_line: str) -> dict:
         """
-        Parse le format du fichier next_move.txt: {couleur};{mouvement}
+        Parse le format du fichier next_move.txt: {couleur};{mouvement};{capture}
 
         Args:
-            move_line: Ligne du fichier (ex: "B;e2e4" ou "N;g8f6")
+            move_line: Ligne du fichier (ex: "B;e2e4;0" ou "N;e4d5;1")
 
         Returns:
-            Dictionnaire avec 'color' et 'move', ou None si invalide
+            Dictionnaire avec 'color', 'move' et 'is_capture', ou None si invalide
 
         Examples:
-            "B;e2e4" -> {'color': 'B', 'move': 'e2e4', 'is_white': True}
-            "N;g8f6" -> {'color': 'N', 'move': 'g8f6', 'is_white': False}
+            "B;e2e4;0" -> {'color': 'B', 'move': 'e2e4', 'is_white': True, 'is_capture': False}
+            "N;e4d5;1" -> {'color': 'N', 'move': 'e4d5', 'is_white': False, 'is_capture': True}
+            "B;e2e4" -> {'color': 'B', 'move': 'e2e4', 'is_white': True, 'is_capture': False} (rétrocompatibilité)
         """
         try:
             parts = move_line.strip().split(';')
-            if len(parts) != 2:
-                print(f"[ERREUR] Format invalide: {move_line} (doit être 'couleur;mouvement')")
+            if len(parts) < 2 or len(parts) > 3:
+                print(f"[ERREUR] Format invalide: {move_line} (doit être 'couleur;mouvement' ou 'couleur;mouvement;capture')")
                 return None
 
             color = parts[0].strip().upper()
             move = parts[1].strip().lower()
 
+            # Nouveau: Gérer le flag de capture (si présent)
+            is_capture = False
+            if len(parts) == 3:
+                capture_flag = parts[2].strip()
+                is_capture = (capture_flag == '1')
+
             # Vérifier la couleur
             if color not in ['B', 'N', 'W']:  # B=Blanc, N=Noir, W=White
-                print(f"[ERREUR] Couleur invalide: {color} (doit être B ou N)")
+                print(f"[ERREUR] Couleur invalide: {color} (doit être B, N ou W)")
                 return None
 
             # Vérifier le format du mouvement (au moins 4 caractères: e2e4)
@@ -412,16 +659,17 @@ class ChessRobotController:
             return {
                 'color': color,
                 'move': move,
-                'is_white': color in ['B', 'W']
+                'is_white': color in ['B', 'W'],
+                'is_capture': is_capture
             }
 
         except Exception as e:
             print(f"[ERREUR] Erreur lors du parsing: {e}")
             return None
 
-    def monitor_next_move_file(self, filename: str = "next_move.txt", callback=None):
+    def monitor_next_move_file(self, filename: str = "next_move.txt", callback=None, move_complete_event: Event = None):
         """
-        Surveille le fichier next_move.txt et exécute les coups automatiquement.
+        Surveille le fichier next_move.txt et exécute les coups automatiquement et signale move_complete_event après chaque coup.
         Format attendu: {couleur};{mouvement}
         Exemple: B;e2e4 (Blanc joue e2 vers e4)
 
@@ -462,14 +710,19 @@ class ChessRobotController:
                             parsed = self.parse_next_move(move_line)
                             if parsed:
                                 color_name = "Blanc" if parsed['is_white'] else "Noir"
-                                print(f"[ROBOT] Couleur: {color_name}, Coup: {parsed['move']}")
+                                capture_status = "CAPTURE" if parsed['is_capture'] else "Déplacement"
+                                print(f"[ROBOT] Couleur: {color_name}, Coup: {parsed['move']}, Type: {capture_status}")
 
-                                # Exécuter le mouvement
-                                # TODO: Intégrer la détection de capture avec votre logique de jeu
-                                self.execute_move(parsed['move'], is_capture=False)
+                                # Exécuter le mouvement avec l'info de capture
+                                self.execute_move(parsed['move'], is_capture=parsed['is_capture'])
 
                                 if callback:
                                     callback(parsed)
+                                # Signaler au thread principal que le mouvement est terminé.
+                                if move_complete_event:
+                                    print("[ROBOT] Mouvement terminé, envoi du signal de complétion.")
+                                    move_complete_event.set()
+
 
                 time.sleep(0.5)  # Vérifier toutes les 500ms
 
@@ -477,68 +730,10 @@ class ChessRobotController:
                 print(f"[ERREUR] Surveillance: {e}")
                 time.sleep(1)
 
-    def monitor_bestmove_file(self, filename: str = "bestmove.txt", callback=None):
-        """
-        Surveille le fichier bestmove.txt et exécute les coups automatiquement.
-
-        Args:
-            filename: Nom du fichier à surveiller (peut être un chemin relatif ou absolu)
-            callback: Fonction appelée après chaque mouvement
-        """
-        last_move = ""
-        last_modified = 0
-
-        # Si un chemin relatif est fourni, le construire depuis le dossier parent
-        if not os.path.isabs(filename):
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            parent_dir = os.path.dirname(current_dir)
-            filename = os.path.join(parent_dir, filename)
-
-        print(f"[ROBOT] Surveillance du fichier {filename}...")
-
-        while not self.stop_monitoring.is_set():
-            try:
-                if os.path.exists(filename):
-                    current_modified = os.path.getmtime(filename)
-                    
-                    # Si le fichier a été modifié
-                    if current_modified != last_modified:
-                        last_modified = current_modified
-                        
-                        with open(filename, 'r') as f:
-                            move = f.read().strip()
-                        
-                        # Si c'est un nouveau coup
-                        if move and move != last_move and len(move) >= 4:
-                            last_move = move
-                            print(f"\n[ROBOT] Nouveau coup détecté: {move}")
-                            
-                            # Exécuter le mouvement
-                            # TODO: Déterminer si c'est une capture
-                            # Vous devrez intégrer cela avec votre logique de jeu
-                            self.execute_move(move, is_capture=False)
-                            
-                            if callback:
-                                callback(move)
-                
-                time.sleep(0.5)  # Vérifier toutes les 500ms
-                
-            except Exception as e:
-                print(f"[ERREUR] Surveillance: {e}")
-                time.sleep(1)
-    
-    def start_monitoring(self, filename: str = "bestmove.txt", callback=None):
-        """Démarre la surveillance de bestmove.txt dans un thread séparé."""
-        self.stop_monitoring.clear()
-        monitor_thread = Thread(target=self.monitor_bestmove_file,
-                               args=(filename, callback))
-        monitor_thread.daemon = True
-        monitor_thread.start()
-        return monitor_thread
-
-    def start_monitoring_next_move(self, filename: str = "next_move.txt", callback=None):
+    def start_monitoring_next_move(self, filename: str = "next_move.txt", callback=None, event: Event = None):
         """
         Démarre la surveillance de next_move.txt dans un thread séparé.
+        Accepte un 'event' pour la synchronisation.
 
         Args:
             filename: Nom du fichier à surveiller (défaut: next_move.txt)
@@ -549,7 +744,7 @@ class ChessRobotController:
         """
         self.stop_monitoring.clear()
         monitor_thread = Thread(target=self.monitor_next_move_file,
-                               args=(filename, callback))
+                               args=(filename, callback, event))
         monitor_thread.daemon = True
         monitor_thread.start()
         print(f"[ROBOT] Surveillance de {filename} démarrée")

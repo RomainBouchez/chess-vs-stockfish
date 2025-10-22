@@ -41,6 +41,7 @@ Ce mode 1v1 lance deux instances distinctes du jeu, synchronisées par un systè
 *   🎨 **Interface Moderne** : Une interface utilisateur sombre, propre et intuitive pour tous les menus et écrans de jeu.
 *   🔄 **Gestion d'Erreurs** : Le système est conçu pour être résilient, avec un mode de secours qui active une IA aléatoire si le moteur Stockfish rencontre des erreurs répétées.
 *   📁 **Communication Inter-Processus** : Le mode 1v1 utilise un système de communication basé sur un fichier (`next_move.txt`) pour synchroniser l'état de la partie entre les deux instances de jeu.
+*   🤖 **Intégration Robot** : Système complet de gestion automatique des captures avec détection et synchronisation entre le jeu et un robot physique d'échecs.
 
 ---
 

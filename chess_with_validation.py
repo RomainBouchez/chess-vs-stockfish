@@ -8,15 +8,16 @@ from piece import Piece
 from utils import Utils
 
 class Chess(object):
-    # MODIFIED: Constructor now accepts player_color for PVP setup
-    def __init__(self, screen, pieces_src, square_coords, square_length, mode, player_color='WHITE'):
+    # MODIFIED: Constructor now accepts player_color for PVP setup and robot_wait_callback
+    def __init__(self, screen, pieces_src, square_coords, square_length, mode, player_color='WHITE', robot_wait_callback=None):
         self.screen = screen
         self.mode = mode
-        self.player_color = player_color # NEW: Store the color this instance plays as
+        self.player_color = player_color # Store the color this instance plays as
         self.chess_pieces = Piece(pieces_src, cols=6, rows=2)
         self.board_locations = square_coords
         self.square_length = square_length
         self.turn = {"black": 0, "white": 1}
+        self.robot_wait_callback = robot_wait_callback  # Callback pour attendre le robot
 
         self.moves = []
         self.utils = Utils()
@@ -34,6 +35,8 @@ class Chess(object):
             "black_pawn": 11, "black_knight": 9, "black_bishop": 8, "black_rook": 10, "black_king": 6, "black_queen": 7
         }
         self.winner = ""
+        self.white_captured = []  # Pièces noires capturées par les blancs
+        self.black_captured = []  # Pièces blanches capturées par les noirs
         self.reset()
 
     def get_winner(self):
@@ -60,6 +63,8 @@ class Chess(object):
         self.winner = ""
         self.validation_board = chess.Board()
         self.turn = {"black": 0, "white": 1}
+        self.white_captured = []
+        self.black_captured = []
 
         self.piece_location = {chr(i): {j: ["", False, [k, 8-j]] for j in range(1, 9)} for k, i in enumerate(range(97, 105))}
         setup = {
@@ -76,35 +81,70 @@ class Chess(object):
             else:
                 for col in "abcdefgh": self.piece_location[col][rank][0] = pieces[0]
 
-    def log_move_to_file(self, move_uci):
-        """Logs the move to the communication file in the format 'W;e2e4'."""
+    def get_capture_info(self, move_uci):
+        """
+        Détermine si un coup UCI est une capture.
+        IMPORTANT: Appeler AVANT de push le move sur validation_board.
+
+        Args:
+            move_uci: Coup au format UCI (ex: 'e4d5')
+
+        Returns:
+            bool: True si c'est une capture, False sinon
+        """
+        try:
+            move = chess.Move.from_uci(move_uci)
+            if move in self.validation_board.legal_moves:
+                # Vérifier si c'est une capture ou une prise en passant
+                return self.validation_board.is_capture(move) or self.validation_board.is_en_passant(move)
+            return False
+        except:
+            return False
+
+    def log_move_to_file(self, move_uci, is_capture=False):
+        """
+        Logs the move to the communication file in the format 'W;e2e4;0' or 'B;e4d5;1'.
+
+        Args:
+            move_uci: Coup au format UCI
+            is_capture: True si c'est une capture (défaut: False)
+        """
         try:
             player_char = "B" if self.validation_board.turn == chess.WHITE else "W"
+            capture_flag = "1" if is_capture else "0"
             with open(self.BESTMOVE_FILE, "w") as f:
-                f.write(f"{player_char};{move_uci}")
+                f.write(f"{player_char};{move_uci};{capture_flag}")
         except Exception as e:
             print(f"[ERROR] Could not write to {self.BESTMOVE_FILE}: {e}")
 
     # RENAMED: This is the turn logic specifically for Player vs AI mode.
     def play_turn_pve(self):
-        """Handles a single turn for PVE mode."""
-        if self.winner: return
+        """
+        Handles a single turn for PVE mode.
+        MODIFIED: Returns True if a move was made, False otherwise.
+        """
+        if self.winner: 
+            return False
 
-        # Determine which color the human is playing and whether board is flipped
-        human_color = self.player_color.lower() if hasattr(self, 'player_color') else 'white'
+        human_color = self.player_color.lower()
         is_flipped = (human_color == 'black')
-
-        # validation_board.turn is True when it's White's move, False for Black
         board_turn_is_white = self.validation_board.turn == chess.WHITE
 
-        # If it's the human's turn, handle human input. Otherwise let engine play.
-        if (board_turn_is_white and human_color == 'white') or (not board_turn_is_white and human_color == 'black'):
-            # human to move
-            self.handle_human_move(human_color, is_flipped=is_flipped)
+        # Si c'est le tour de l'humain
+        if (board_turn_is_white and human_color == 'white') or \
+        (not board_turn_is_white and human_color == 'black'):
+            
+            # handle_human_move retourne déjà True si un coup est joué, on propage juste la valeur
+            return self.handle_human_move(human_color, is_flipped=is_flipped)
+        
+        # Si c'est le tour de l'IA
         else:
             if not self.stockfish_thinking:
-                pygame.time.wait(200)
-                self.run_stockfish_move()
+                pygame.time.wait(200) # Petit délai avant que l'IA ne joue
+                # run_stockfish_move retourne maintenant True si un coup est joué
+                return self.run_stockfish_move()
+                
+        return False # Aucun coup n'a été joué dans cette frame
 
     # MODIFIED: This function now returns True if a move was successfully made.
     def handle_human_move(self, turn_color, is_flipped):
@@ -147,11 +187,18 @@ class Chess(object):
                         if self.piece_location[k_from][r_from][0] == pawn_name and (rowNo == 8 or rowNo == 1):
                             move_uci += 'q'
 
+                        # Détecter si c'est une capture AVANT d'appliquer le coup
+                        is_capture = self.get_capture_info(move_uci)
+
                         if self.validate_and_apply_move(move_uci):
                             # In PVP, log the move to the file for the other client
-                            if self.mode == 'pvp':
-                                print(f"[{self.player_color}] Move made: {move_uci}. Logging to file.")
-                                self.log_move_to_file(move_uci)
+                            print(f"[{self.player_color}] Move made: {move_uci}. Logging to file.")
+                            self.log_move_to_file(move_uci, is_capture)
+
+                            # Attendre que le robot termine le coup (si activé)
+                            if self.robot_wait_callback:
+                                self.robot_wait_callback()
+
                             return True # A move was successfully made!
                         else:
                             # If move is illegal, just deselect the piece
@@ -226,7 +273,15 @@ class Chess(object):
         from_file, from_rank = from_sq[0], int(from_sq[1])
         to_file, to_rank = to_sq[0], int(to_sq[1])
         piece_name = self.piece_location[from_file][from_rank][0]
-        
+
+        # Gérer la capture d'une pièce
+        captured_piece = self.piece_location[to_file][to_rank][0]
+        if captured_piece:  # S'il y a une pièce sur la case de destination
+            if captured_piece.startswith('white'):
+                self.black_captured.append(captured_piece)
+            else:
+                self.white_captured.append(captured_piece)
+
         self.piece_location[to_file][to_rank][0] = piece_name
         self.piece_location[from_file][from_rank][0] = ""
         
@@ -246,6 +301,12 @@ class Chess(object):
                 print(f"Grand roque effectué sur le rang {to_rank}")
         # Gérer la prise en passant
         elif is_en_passant:
+            captured_pawn = self.piece_location[to_file][from_rank][0]
+            if captured_pawn:
+                if captured_pawn.startswith('white'):
+                    self.black_captured.append(captured_pawn)
+                else:
+                    self.white_captured.append(captured_pawn)
             self.piece_location[to_file][from_rank][0] = ""
         # Gérer la promotion
         elif move.promotion:
@@ -267,17 +328,55 @@ class Chess(object):
             self.winner = "Draw"
 
     def run_stockfish_move(self):
-        """Gets and applies a move from the AI (PVE only)."""
-        if self.stockfish_thinking: return
+        """
+        Gets and applies a move from the AI (PVE only).
+        MODIFIED: Returns True if a move was successfully made, False otherwise.
+        """
+        if self.stockfish_thinking: 
+            return False
+            
         self.stockfish_thinking = True
         
         fen = self.validation_board.fen()
-        bestmove = self.engine_instance.get_best_move(fen)
+        bestmove_uci = self.engine_instance.get_best_move(fen)
 
-        if bestmove and self.validate_and_apply_move(bestmove):
-            print(f"Stockfish plays: {bestmove}")
-        else:
+        if not bestmove_uci:
             legal_moves = list(self.validation_board.legal_moves)
-            if legal_moves: self.validate_and_apply_move(random.choice(legal_moves).uci())
+            if legal_moves:
+                bestmove_uci = random.choice(legal_moves).uci()
+            else:
+                self.stockfish_thinking = False
+                return False # Aucun coup possible
+
+        is_capture = self.get_capture_info(bestmove_uci)
+        
+        # CORRECTION PRINCIPALE : On utilise une variable pour suivre si le coup a réussi
+        move_was_successful = False
+        if self.validate_and_apply_move(bestmove_uci):
+            print(f"Stockfish plays: {bestmove_uci} (Capture: {is_capture})")
+            self.log_move_to_file(bestmove_uci, is_capture)
+
+            # Attendre que le robot termine le coup de Stockfish (si activé)
+            if self.robot_wait_callback:
+                self.robot_wait_callback()
+
+            move_was_successful = True
+        else:
+            # Fallback si le coup de Stockfish est invalide (ne devrait pas arriver)
+            print(f"[ERROR] Stockfish proposed an illegal move: {bestmove_uci}. Trying a random move.")
+            legal_moves = list(self.validation_board.legal_moves)
+            if legal_moves:
+                random_move_uci = random.choice(legal_moves).uci()
+                is_capture_fallback = self.get_capture_info(random_move_uci)
+                if self.validate_and_apply_move(random_move_uci):
+                    self.log_move_to_file(random_move_uci, is_capture_fallback)
+
+                    # Attendre que le robot termine le coup (si activé)
+                    if self.robot_wait_callback:
+                        self.robot_wait_callback()
+
+                    move_was_successful = True
         
         self.stockfish_thinking = False
+        # On retourne la variable pour que le jeu sache s'il doit attendre le robot
+        return move_was_successful
