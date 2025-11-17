@@ -138,11 +138,35 @@ class RobotCalibration:
         if not self.serial_conn or not self.serial_conn.is_open:
             print("[ERREUR] Pas de connexion active")
             return False
-        
+
         try:
-            self.serial_conn.write(f"{command}\n".encode())
-            print(f">>> {command}")
-            
+            # Détecter les coordonnées négatives et utiliser le mode relatif si nécessaire
+            if 'X-' in command or 'Y-' in command or 'Z-' in command:
+                # Convertir en mode relatif pour les mouvements négatifs
+                print(f"[INFO] Coordonnée négative détectée, utilisation du mode relatif")
+                parts = command.split()
+                if len(parts) >= 2:
+                    # Extraire les paramètres X, Y, Z
+                    move_cmd = parts[0]  # G0 ou G1
+                    coords = ' '.join(parts[1:])
+
+                    # Passer en mode relatif, bouger, puis revenir en absolu
+                    self.serial_conn.write(b"G91\n")
+                    time.sleep(0.1)
+                    self.serial_conn.write(f"{move_cmd} {coords}\n".encode())
+                    time.sleep(0.2)
+                    self.serial_conn.write(b"G90\n")
+                    print(f">>> G91 (relatif)")
+                    print(f">>> {move_cmd} {coords}")
+                    print(f">>> G90 (absolu)")
+                else:
+                    self.serial_conn.write(f"{command}\n".encode())
+                    print(f">>> {command}")
+            else:
+                # Commande normale
+                self.serial_conn.write(f"{command}\n".encode())
+                print(f">>> {command}")
+
             # Lire la réponse
             time.sleep(0.2)
             while self.serial_conn.in_waiting:
@@ -150,9 +174,9 @@ class RobotCalibration:
                 response = self.serial_conn.readline().decode(errors='ignore').strip()
                 if response:
                     print(f"<<< {response}")
-            
+
             return True
-            
+
         except Exception as e:
             print(f"[ERREUR] Envoi commande: {e}")
             return False
