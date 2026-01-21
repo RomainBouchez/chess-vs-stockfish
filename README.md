@@ -334,12 +334,26 @@ python tools/diagnose_engines.py
 
 ## ❓ Troubleshooting (Dépannage)
 
-### Problème : "ModuleNotFoundError: No module named 'pygame'"
+### Problème : "ModuleNotFoundError: No module named 'pygame'" ou 'requests'
+
+**Cause :** Les dépendances Python ne sont pas installées.
 
 **Solution :**
 ```sh
 pip install -r requirements.txt
 ```
+
+**Note :** Le fichier `requirements.txt` inclut maintenant :
+- `pygame` - Interface graphique
+- `python-chess` - Logique d'échecs
+- `requests` - Téléchargement des moteurs (Stockfish)
+
+**Pour le robot (optionnel) :**
+```sh
+pip install pyserial
+```
+
+---
 
 ### Problème : "Stockfish n'est pas installé"
 
@@ -450,6 +464,11 @@ python tools/diagnose_engines.py
 ## 🤖 Intégration Robot (Avancé)
 
 Le dossier `G-Code_Controller/` contient un système complet pour contrôler un robot échiquier physique.
+
+**Prérequis :**
+```sh
+pip install pyserial
+```
 
 **Fonctionnalités :**
 - Communication série avec contrôleur G-Code

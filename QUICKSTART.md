@@ -51,7 +51,9 @@ python main_stockfish.py
 
 | Problème | Solution Rapide |
 |----------|-----------------|
-| `ModuleNotFoundError` | `pip install -r requirements.txt` |
+| `ModuleNotFoundError: No module named 'pygame'` | `pip install -r requirements.txt` |
+| `ModuleNotFoundError: No module named 'requests'` | `pip install -r requirements.txt` |
+| `ModuleNotFoundError: No module named 'serial'` | Robot uniquement : `pip install pyserial` |
 | Stockfish non installé | Menu → "Engines" → Download "Stockfish latest" |
 | Jeu trop lent | Settings → Réduire "Time Limit" à 0.5s |
 

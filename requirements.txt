@@ -1,3 +1,10 @@
 # Requirements for Chess vs Stockfish
+
+# Core dependencies (required)
 pygame>=2.6.0
 python-chess>=1.999
+requests>=2.31.0
+
+# Optional dependencies (for robot integration)
+# Uncomment the line below if you plan to use the robot chess controller
+# pyserial>=3.5
