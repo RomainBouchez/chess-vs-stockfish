@@ -12,7 +12,7 @@ class ChessRobotController:
     Lit les coups depuis bestmove.txt et convertit en mouvements physiques.
     """
     
-    def __init__(self, port: str = 'COM3', baudrate: int = 115200, config_file: str = 'robot_config.ini'):
+    def __init__(self, port: str = 'COM5', baudrate: int = 250000, config_file: str = 'robot_config.ini'):
         """
         Initialise le contrôleur du robot.
 
@@ -27,6 +27,11 @@ class ChessRobotController:
         self.is_connected = False
         self.stop_monitoring = Event()
 
+        # Construire le chemin absolu du fichier de config s'il est relatif
+        if not os.path.isabs(config_file):
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            config_file = os.path.join(script_dir, config_file)
+
         # Charger la configuration depuis robot_config.ini
         self.load_config(config_file)
 
@@ -36,6 +41,7 @@ class ChessRobotController:
 
         # Tracking de l'état du plateau pour connaître la couleur des pièces
         self.board_state = {}
+        self.captured_pieces = []  # List to store captured pieces: {'type', 'color', 'storage_pos'}
         self.init_board_state()
 
     def load_config(self, config_file: str):
@@ -73,6 +79,12 @@ class ChessRobotController:
                 'grab_delay': '0.5',
                 'release_delay': '0.5'
             }
+
+        # Charger les paramètres série (écrase les valeurs passées au constructeur)
+        if 'SERIAL' in config:
+            self.port = config['SERIAL'].get('port', self.port)
+            self.baudrate = int(config['SERIAL'].get('baudrate', self.baudrate))
+            print(f"[CONFIG] Port série: {self.port} à {self.baudrate} bauds")
 
         # Charger les paramètres du plateau
         self.SQUARE_SIZE = float(config['BOARD']['square_size'])
@@ -116,10 +128,28 @@ class ChessRobotController:
         else:
             self.XY_SETTLE_DELAY = 1.0
 
+        # Pronation (servo de rotation de la pince)
+        if 'PRONATION' in config:
+            self.PRONATION_ENABLED = config['PRONATION'].get('pronation_enabled', 'false').lower() == 'true'
+            self.PRONATION_PIN = int(config['PRONATION'].get('pronation_pin', '0'))
+            self.PRONATION_NEUTRAL = int(config['PRONATION'].get('pronation_neutral', '90'))
+            self.PRONATION_LEFT = int(config['PRONATION'].get('pronation_left', '0'))
+            self.PRONATION_RIGHT = int(config['PRONATION'].get('pronation_right', '180'))
+            self.PRONATION_DELAY = float(config['PRONATION'].get('pronation_delay', '0.3'))
+        else:
+            self.PRONATION_ENABLED = False
+            self.PRONATION_PIN = 0
+            self.PRONATION_NEUTRAL = 90
+            self.PRONATION_LEFT = 0
+            self.PRONATION_RIGHT = 180
+            self.PRONATION_DELAY = 0.3
+
         print(f"[CONFIG] Plateau: {self.SQUARE_SIZE}mm/case, offset=({self.BOARD_OFFSET_X}, {self.BOARD_OFFSET_Y})")
         print(f"[CONFIG] Hauteurs: safe={self.Z_SAFE}, grab={self.Z_GRAB}, lift={self.Z_LIFT}")
         print(f"[CONFIG] Axe Z: UP={self.Z_UP_COMMAND}, DOWN={self.Z_DOWN_COMMAND}")
         print(f"[CONFIG] Délai stabilisation XY: {self.XY_SETTLE_DELAY}s")
+        if self.PRONATION_ENABLED:
+            print(f"[CONFIG] Pronation: P{self.PRONATION_PIN}, neutre={self.PRONATION_NEUTRAL}°, gauche={self.PRONATION_LEFT}°, droite={self.PRONATION_RIGHT}°")
 
     def connect(self) -> bool:
         """
@@ -204,24 +234,28 @@ class ChessRobotController:
     
     def init_board_state(self):
         """Initialise l'état du plateau avec la position de départ des échecs."""
+        self.board_state = {}
+        
         # Pièces blanches (rang 1 et 2)
         for file in 'abcdefgh':
-            self.board_state[f"{file}2"] = "white"  # Pions blancs
+            self.board_state[f"{file}2"] = {"color": "white", "type": "pawn"}
+            
         self.board_state.update({
-            "a1": "white", "h1": "white",  # Tours
-            "b1": "white", "g1": "white",  # Cavaliers
-            "c1": "white", "f1": "white",  # Fous
-            "d1": "white", "e1": "white"   # Reine et Roi
+            "a1": {"color": "white", "type": "rook"}, "h1": {"color": "white", "type": "rook"},
+            "b1": {"color": "white", "type": "knight"}, "g1": {"color": "white", "type": "knight"},
+            "c1": {"color": "white", "type": "bishop"}, "f1": {"color": "white", "type": "bishop"},
+            "d1": {"color": "white", "type": "queen"}, "e1": {"color": "white", "type": "king"}
         })
 
         # Pièces noires (rang 7 et 8)
         for file in 'abcdefgh':
-            self.board_state[f"{file}7"] = "black"  # Pions noirs
+            self.board_state[f"{file}7"] = {"color": "black", "type": "pawn"}
+            
         self.board_state.update({
-            "a8": "black", "h8": "black",  # Tours
-            "b8": "black", "g8": "black",  # Cavaliers
-            "c8": "black", "f8": "black",  # Fous
-            "d8": "black", "e8": "black"   # Reine et Roi
+            "a8": {"color": "black", "type": "rook"}, "h8": {"color": "black", "type": "rook"},
+            "b8": {"color": "black", "type": "knight"}, "g8": {"color": "black", "type": "knight"},
+            "c8": {"color": "black", "type": "bishop"}, "f8": {"color": "black", "type": "bishop"},
+            "d8": {"color": "black", "type": "queen"}, "e8": {"color": "black", "type": "king"}
         })
 
     def update_board_state(self, move_uci: str):
@@ -236,8 +270,8 @@ class ChessRobotController:
 
         # Déplacer la pièce
         if from_square in self.board_state:
-            piece_color = self.board_state[from_square]
-            self.board_state[to_square] = piece_color
+            piece_data = self.board_state[from_square]
+            self.board_state[to_square] = piece_data
             del self.board_state[from_square]
 
     def home_robot(self):
@@ -292,18 +326,24 @@ class ChessRobotController:
     
     def move_z(self, z_target: float):
         """
-        Déplace l'axe Z en utilisant les commandes servo M280.
+        Déplace l'axe Z en utilisant G0 (stepper) ou les commandes configurées.
 
         Args:
-            z_target: Hauteur cible (compare avec Z_GRAB pour déterminer UP/DOWN)
+            z_target: Hauteur cible en mm
         """
-        # Si z_target est proche de Z_GRAB, descendre, sinon monter
-        if z_target <= self.Z_GRAB:
-            print(f"[Z-AXIS] Descente (Z={z_target:.2f}mm)")
-            self.send_command(self.Z_DOWN_COMMAND)
+        # Vérifier si les commandes Z sont des G0 (stepper) ou M280 (servo)
+        if self.Z_UP_COMMAND.startswith('G0') or self.Z_UP_COMMAND.startswith('G1'):
+            # Mode stepper : utiliser G0 Z directement avec la hauteur cible
+            print(f"[Z-AXIS] Déplacement vers Z={z_target:.2f}mm")
+            self.send_command(f"G0 Z{z_target:.2f} F{self.FEED_RATE_TRAVEL}")
         else:
-            print(f"[Z-AXIS] Montée (Z={z_target:.2f}mm)")
-            self.send_command(self.Z_UP_COMMAND)
+            # Mode servo : utiliser les commandes UP/DOWN configurées
+            if z_target <= self.Z_GRAB:
+                print(f"[Z-AXIS] Descente (Z={z_target:.2f}mm)")
+                self.send_command(self.Z_DOWN_COMMAND)
+            else:
+                print(f"[Z-AXIS] Montée (Z={z_target:.2f}mm)")
+                self.send_command(self.Z_UP_COMMAND)
         time.sleep(self.Z_MOVE_DELAY)
 
     def move_to_position(self, x: float, y: float, z: float, feed_rate: int = None):
@@ -342,7 +382,38 @@ class ChessRobotController:
         """Désactive le mécanisme de préhension."""
         self.send_command(self.RELEASE_COMMAND)
         time.sleep(self.RELEASE_DELAY)
-    
+
+    # ==================== FONCTIONS DE PRONATION ====================
+
+    def pronation_set_angle(self, angle: int):
+        """
+        Définit l'angle du servo de pronation.
+
+        Args:
+            angle: Angle en degrés (0-180)
+        """
+        if not self.PRONATION_ENABLED:
+            print("[PRONATION] Pronation désactivée dans la config")
+            return
+
+        angle = max(0, min(180, angle))  # Limiter entre 0 et 180
+        cmd = f"M280 P{self.PRONATION_PIN} S{angle}"
+        print(f"[PRONATION] Rotation vers {angle}°")
+        self.send_command(cmd)
+        time.sleep(self.PRONATION_DELAY)
+
+    def pronation_neutral(self):
+        """Place la pince en position neutre."""
+        self.pronation_set_angle(self.PRONATION_NEUTRAL)
+
+    def pronation_left(self):
+        """Tourne la pince vers la gauche."""
+        self.pronation_set_angle(self.PRONATION_LEFT)
+
+    def pronation_right(self):
+        """Tourne la pince vers la droite."""
+        self.pronation_set_angle(self.PRONATION_RIGHT)
+
     def execute_castling(self, king_from: str, king_to: str, rook_from: str, rook_to: str):
         """
         Exécute un roque (roi + tour).
@@ -384,9 +455,12 @@ class ChessRobotController:
         self.move_to_position(rook_to_x, rook_to_y, self.Z_SAFE, self.FEED_RATE_WORK)
 
         # 3. Mettre à jour le board_state
-        king_color = self.board_state.get(king_from)
-        self.board_state[king_to] = king_color
-        self.board_state[rook_to] = king_color
+        king_data = self.board_state.get(king_from)
+        self.board_state[king_to] = king_data
+        
+        rook_data = self.board_state.get(rook_from)
+        self.board_state[rook_to] = rook_data
+        
         del self.board_state[king_from]
         del self.board_state[rook_from]
 
@@ -434,8 +508,8 @@ class ChessRobotController:
         to_square = uci_move[2:4]
 
         # Vérifier si c'est un pion
-        piece_color = self.board_state.get(from_square)
-        if piece_color is None:
+        piece_data = self.board_state.get(from_square)
+        if piece_data is None:
             return None
 
         # Prise en passant : mouvement diagonal d'un pion vers une case vide
@@ -497,18 +571,18 @@ class ChessRobotController:
 
         # S'il y a bien une pièce à capturer, on la retire du plateau en premier
         if captured_piece_square:
-            captured_piece_color = self.board_state.get(captured_piece_square)
+            captured_piece_data = self.board_state.get(captured_piece_square)
             
             # Sécurité : vérifier que le robot pense bien qu'il y a une pièce à cet endroit
-            if captured_piece_color is None:
+            if captured_piece_data is None:
                 print(f"[ROBOT] [ERREUR] Désynchronisation! Le jeu a signalé une capture en {captured_piece_square}, mais le robot ne voit aucune pièce à cet endroit.")
             else:
-                print(f"[ROBOT] [ACTION] Début de la procédure de capture pour la pièce {captured_piece_color} en {captured_piece_square}.")
-                is_white_captured = (captured_piece_color == "white")
+                print(f"[ROBOT] [ACTION] Début de la procédure de capture pour la pièce {captured_piece_data} en {captured_piece_square}.")
+                is_white_captured = (captured_piece_data['color'] == "white")
                 cap_x, cap_y = self.uci_to_coordinates(captured_piece_square)
                 
                 # Séquence de retrait de la pièce capturée
-                self.remove_captured_piece(cap_x, cap_y, is_white_piece=is_white_captured)
+                self.remove_captured_piece(cap_x, cap_y, is_white_piece=is_white_captured, captured_piece_data=captured_piece_data)
                 
                 # Mettre à jour l'état du plateau IMMÉDIATEMENT pour la pièce capturée
                 del self.board_state[captured_piece_square]
@@ -542,56 +616,135 @@ class ChessRobotController:
         self.update_board_state(uci_move)
         print(f"[ROBOT] [STATE] État interne mis à jour pour le coup {uci_move}.")
         print(f"[ROBOT] [SUCCESS] Coup {uci_move} terminé ✓")
+        
     def get_capture_zone_position(self, is_white_piece: bool):
         """
         Calcule la position de la zone de capture pour une pièce.
-        Les pièces sont placées à côté du plateau, organisées par couleur.
 
-        Args:
-            is_white_piece: True si c'est une pièce blanche capturée, False pour noire
+        Disposition (vue de dessus, blancs en bas) :
 
-        Returns:
-            tuple: (capture_x, capture_y) en mm
+            [N 2x4]  [  PLATEAU  ]  [N 2x4]    <- côté noir (rangs 7-8)
+                     [           ]
+                     [           ]
+            [B 2x4]  [  PLATEAU  ]  [B 2x4]    <- côté blanc (rangs 1-2)
+
+        - Pièces BLANCHES capturées : zones côté blanc (X bas), gauche puis droite
+        - Pièces NOIRES capturées : zones côté noir (X haut), gauche puis droite
+        - Chaque zone : 2 colonnes (Y) × 4 rangées (X) = 8 cases
+        - Espacement : même que SQUARE_SIZE
         """
-        # Calculer la taille du plateau
+        # Charger l'état si disponible pour ne pas écraser les pièces précédentes après redémarrage
+        self.load_state()
+
+        spacing = self.SQUARE_SIZE  # Même espacement que le plateau
         board_size = self.SQUARE_SIZE * 8
 
         if is_white_piece:
-            # Pièces blanches capturées : côté droit du plateau (h1-h8)
-            base_x = self.BOARD_OFFSET_X
-            base_y = self.BOARD_OFFSET_Y + board_size + self.CAPTURE_SPACING  # À droite du plateau
+            # Pièces BLANCHES capturées : côté blanc du plateau (rangs 1-2, X bas)
+            count = self.white_capture_count
 
-            # Organiser en grille : 4 colonnes
-            col = self.white_capture_count % 4
-            row = self.white_capture_count // 4
+            # Zone gauche (0-7) puis zone droite (8-15)
+            if count < 8:
+                # Zone GAUCHE : Y < plateau, X aligné sur rangs 1-4
+                zone = "gauche"
+                local_index = count
+                # 2 colonnes (Y) × 4 rangées (X)
+                col = local_index % 2  # 0 ou 1 (colonne Y)
+                row = local_index // 2  # 0 à 3 (rangée X)
 
-            capture_x = base_x + row * self.CAPTURE_SPACING
-            capture_y = base_y + col * self.CAPTURE_SPACING
+                # Position : à gauche du plateau
+                capture_y = self.BOARD_OFFSET_Y - spacing - (col * spacing)
+                capture_x = self.BOARD_OFFSET_X + (row * spacing) + (spacing / 2)
+            else:
+                # Zone DROITE : Y > plateau, X aligné sur rangs 1-4
+                zone = "droite"
+                local_index = count - 8
+                col = local_index % 2
+                row = local_index // 2
+
+                # Position : à droite du plateau
+                capture_y = self.BOARD_OFFSET_Y + board_size + (col * spacing)
+                capture_x = self.BOARD_OFFSET_X + (row * spacing) + (spacing / 2)
 
             self.white_capture_count += 1
+            self.save_state()
+            print(f"[CAPTURE] Pièce BLANCHE #{count+1} -> zone {zone} ({capture_x:.1f}, {capture_y:.1f})")
+
         else:
-            # Pièces noires capturées : côté gauche du plateau (a1-a8)
-            base_x = self.BOARD_OFFSET_X
-            base_y = self.BOARD_OFFSET_Y - self.CAPTURE_SPACING  # À gauche du plateau
+            # Pièces NOIRES capturées : côté noir du plateau (rangs 7-8, X haut)
+            count = self.black_capture_count
 
-            # Organiser en grille : 4 colonnes
-            col = self.black_capture_count % 4
-            row = self.black_capture_count // 4
+            # Zone gauche (0-7) puis zone droite (8-15)
+            if count < 8:
+                # Zone GAUCHE : Y < plateau, X aligné sur rangs 5-8
+                zone = "gauche"
+                local_index = count
+                col = local_index % 2
+                row = local_index // 2
 
-            capture_x = base_x + row * self.CAPTURE_SPACING
-            capture_y = base_y - col * self.CAPTURE_SPACING
+                # Position : à gauche du plateau, côté haut (rangs 5-8)
+                capture_y = self.BOARD_OFFSET_Y - spacing - (col * spacing)
+                capture_x = self.BOARD_OFFSET_X + board_size - (row * spacing) - (spacing / 2)
+            else:
+                # Zone DROITE : Y > plateau, X aligné sur rangs 5-8
+                zone = "droite"
+                local_index = count - 8
+                col = local_index % 2
+                row = local_index // 2
+
+                # Position : à droite du plateau, côté haut
+                capture_y = self.BOARD_OFFSET_Y + board_size + (col * spacing)
+                capture_x = self.BOARD_OFFSET_X + board_size - (row * spacing) - (spacing / 2)
 
             self.black_capture_count += 1
+            self.save_state()
+            print(f"[CAPTURE] Pièce NOIRE #{count+1} -> zone {zone} ({capture_x:.1f}, {capture_y:.1f})")
+
+        # Vérification des coordonnées négatives
+        if capture_x < 0 or capture_y < 0:
+            print(f"[WARNING] Coordonnée négative détectée! ({capture_x:.1f}, {capture_y:.1f})")
+            print(f"[WARNING] Vérifiez board_offset_x/y dans robot_config.ini (min recommandé: {2*spacing:.1f}mm)")
 
         return (capture_x, capture_y)
 
-    def remove_captured_piece(self, x: float, y: float, is_white_piece: bool = None):
+    def load_state(self):
+        """Charge les compteurs de capture depuis un fichier json."""
+        state_file = "robot_state.json"
+        if os.path.exists(state_file):
+            try:
+                import json
+                with open(state_file, 'r') as f:
+                    data = json.load(f)
+                    # On ne charge que si les compteurs actuels sont à 0 (démarrage du script)
+                    if self.white_capture_count == 0 and self.black_capture_count == 0:
+                        self.white_capture_count = data.get('white_count', 0)
+                        self.black_capture_count = data.get('black_count', 0)
+                        print(f"[STATE] État chargé: W={self.white_capture_count}, B={self.black_capture_count}")
+            except Exception as e:
+                print(f"[STATE] Erreur chargement état: {e}")
+
+    def save_state(self):
+        """Sauvegarde les compteurs de capture."""
+        state_file = "robot_state.json"
+        try:
+            import json
+            data = {
+                'white_count': self.white_capture_count,
+                'black_count': self.black_capture_count
+            }
+            with open(state_file, 'w') as f:
+                json.dump(data, f)
+        except Exception as e:
+            print(f"[STATE] Erreur sauvegarde état: {e}")
+
+    def remove_captured_piece(self, x: float, y: float, is_white_piece: bool = None, captured_piece_data: dict = None):
         """
         Retire une pièce capturée et la place dans la zone de capture à côté du plateau.
 
         Args:
             x, y: Coordonnées de la pièce à capturer
             is_white_piece: True si pièce blanche, False si noire, None pour auto-détection (obsolète)
+            captured_piece_data: Données de la pièce (optionnel, pour mémoire)
         """
         # Si is_white_piece n'est pas fourni, utiliser l'ancien système (rétrocompatibilité)
         if is_white_piece is None:
@@ -601,6 +754,15 @@ class ChessRobotController:
         else:
             # Nouveau système : placer à côté du plateau selon la couleur
             capture_x, capture_y = self.get_capture_zone_position(is_white_piece)
+            
+        # Enregistrer dans la mémoire des pièces capturées
+        if captured_piece_data:
+            self.captured_pieces.append({
+                'type': captured_piece_data['type'],
+                'color': captured_piece_data['color'],
+                'storage_pos': (capture_x, capture_y)
+            })
+            print(f"[MEMORY] Pièce ajoutée à la mémoire: {captured_piece_data['type']} {captured_piece_data['color']} -> ({capture_x:.1f}, {capture_y:.1f})")
 
         print(f"[ROBOT] Déplacement pièce capturée vers zone ({capture_x:.1f}, {capture_y:.1f})")
 
@@ -761,17 +923,13 @@ class ChessRobotController:
 
 def main():
     """Exemple d'utilisation du contrôleur."""
-    
-    # Configuration - ADAPTER À VOTRE ROBOT
-    SERIAL_PORT = 'COM3'  # Windows: 'COM3', Linux: '/dev/ttyUSB0'
-    BAUDRATE = 250000
-    
+
     print("="*60)
     print("CONTRÔLEUR ROBOT D'ÉCHECS - G-CODE")
     print("="*60)
-    
-    # Créer le contrôleur
-    robot = ChessRobotController(port=SERIAL_PORT, baudrate=BAUDRATE)
+
+    # Créer le contrôleur (port et baudrate sont lus depuis robot_config.ini)
+    robot = ChessRobotController()
     
     # 1. Tenter de se connecter
     if robot.connect():
@@ -782,7 +940,8 @@ def main():
         print("1. Mode surveillance automatique (bestmove.txt)")
         print("2. Mode surveillance next_move.txt (format: couleur;mouvement)")
         print("3. Mode test manuel")
-        print("4. Quitter")
+        print("4. Test pronation (servo)")
+        print("5. Quitter")
 
         choice = input("\nVotre choix: ")
 
@@ -837,6 +996,29 @@ def main():
                     robot.execute_move(move, is_capture)
                 else:
                     print("Format invalide. Exemple: e2e4")
+
+        elif choice == '4':
+            # Mode test pronation
+            print("\n[INFO] Test de pronation du servo")
+            print("[INFO] Commandes: 'n'=neutre, 'g'=gauche, 'd'=droite, 'angle'=valeur 0-180, 'quit'=quitter\n")
+
+            while True:
+                cmd = input("Commande (n/g/d/0-180/quit): ").strip().lower()
+
+                if cmd == 'quit':
+                    break
+                elif cmd == 'n':
+                    robot.pronation_neutral()
+                elif cmd == 'g':
+                    robot.pronation_left()
+                elif cmd == 'd':
+                    robot.pronation_right()
+                else:
+                    try:
+                        angle = int(cmd)
+                        robot.pronation_set_angle(angle)
+                    except ValueError:
+                        print("Commande invalide. Utilisez n/g/d ou un angle 0-180")
     else:
         # Si la connexion a échoué, afficher une erreur et arrêter
         print("\n[ERREUR FATALE] Impossible de continuer sans connexion au robot.")

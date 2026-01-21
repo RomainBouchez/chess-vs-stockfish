@@ -45,16 +45,16 @@ class UniversalEngine:
         try:
             available = self.engine_manager.get_available_engines()
             
-            # Essayer d'installer Stockfish 16 en priorité
-            if "stockfish_16" in available:
-                print("Installation automatique de Stockfish 16...")
-                self.engine_manager.download_engine("stockfish_16")
+            # Essayer d'installer Stockfish latest en priorité
+            if "stockfish_latest" in available:
+                print("Installation automatique de Stockfish...")
+                self.engine_manager.download_engine("stockfish_latest")
                 
                 # Sauvegarder comme moteur sélectionné
                 with open("selected_engine.txt", "w") as f:
-                    f.write("stockfish_16")
+                    f.write("stockfish_latest")
                 
-                return self.engine_manager.get_engine_path("stockfish_16"), "stockfish_16"
+                return self.engine_manager.get_engine_path("stockfish_latest"), "stockfish_latest"
         except Exception as e:
             print(f"Impossible d'installer automatiquement un moteur: {e}")
         

@@ -10,6 +10,7 @@ try:
     from utils import Utils
     from settings_menu import SettingsMenu
     from settings import StockfishSettings
+    from bot_selection_menu import BotSelectionMenu
 except ImportError as e:
     print(f"[ERROR] A required module is missing: {e}")
     print("Please ensure all game files (chess_with_validation.py, utils.py, etc.) are in the same directory.")
@@ -209,43 +210,60 @@ class Game:
 
     def draw_captured_pieces(self):
         """Affiche les pièces capturées sur le côté du plateau."""
-        # Définir un ordre de tri pour regrouper les pièces par type
-        piece_order = {'pawn': 1, 'knight': 2, 'bishop': 3, 'rook': 4, 'queen': 5}
-
-        # Trier les pièces capturées
-        white_captured_sorted = sorted(self.chess.white_captured,
-                                      key=lambda p: piece_order.get(p.split('_')[1], 0))
-        black_captured_sorted = sorted(self.chess.black_captured,
-                                      key=lambda p: piece_order.get(p.split('_')[1], 0))
+        # Note: self.chess.white_captured contient les pièces NOIRES capturées (par les blancs)
+        # Note: self.chess.black_captured contient les pièces BLANCHES capturées (par les noirs)
 
         # Taille réduite pour les pièces capturées
         piece_size = 30
         x_offset = 500  # Position à droite du plateau
-
-        # Afficher les pièces noires capturées (par les blancs) en haut
+        
+        # --- Affichage des pièces NOIRES (capturées) en HAUT ---
         y_black = 60
-        for i, piece_name in enumerate(white_captured_sorted):
+        # Dessiner une grille vide 4x4 pour matérialiser les emplacements
+        for i in range(16):
+            col = i % 4
+            row = i // 4
+            rect = (x_offset + col * piece_size, y_black + row * piece_size, piece_size, piece_size)
+            pygame.draw.rect(self.screen, (60, 60, 60), rect, 1) # Cadre gris foncé
+
+        # Afficher les pièces dans l'ordre de capture (PAS DE TRI)
+        for i, piece_name in enumerate(self.chess.white_captured):
+            if i >= 16: break # Sécurité dépassement grille
             x_pos = x_offset + (i % 4) * piece_size
             y_pos = y_black + (i // 4) * piece_size
             scaled_pos = (x_pos, y_pos)
+            
             # Récupérer l'index de la pièce et l'afficher
-            piece_index = self.chess.chess_pieces.pieces[piece_name]
-            cell = self.chess.chess_pieces.cells[piece_index]
-            piece_img = self.chess.chess_pieces.spritesheet.subsurface(cell)
-            piece_img = pygame.transform.scale(piece_img, (piece_size, piece_size))
-            self.screen.blit(piece_img, scaled_pos)
+            if piece_name in self.chess.chess_pieces.pieces:
+                piece_index = self.chess.chess_pieces.pieces[piece_name]
+                cell = self.chess.chess_pieces.cells[piece_index]
+                piece_img = self.chess.chess_pieces.spritesheet.subsurface(cell)
+                piece_img = pygame.transform.scale(piece_img, (piece_size, piece_size))
+                self.screen.blit(piece_img, scaled_pos)
 
-        # Afficher les pièces blanches capturées (par les noirs) en bas
-        y_white = 650
-        for i, piece_name in enumerate(black_captured_sorted):
+        # --- Affichage des pièces BLANCHES (capturées) en BAS ---
+        # Ajusté à 550 pour éviter que ça sorte de l'écran (750px)
+        y_white = 550
+        # Dessiner une grille vide 4x4
+        for i in range(16):
+            col = i % 4
+            row = i // 4
+            rect = (x_offset + col * piece_size, y_white + row * piece_size, piece_size, piece_size)
+            pygame.draw.rect(self.screen, (60, 60, 60), rect, 1)
+
+        # Afficher les pièces dans l'ordre de capture
+        for i, piece_name in enumerate(self.chess.black_captured):
+            if i >= 16: break
             x_pos = x_offset + (i % 4) * piece_size
             y_pos = y_white + (i // 4) * piece_size
             scaled_pos = (x_pos, y_pos)
-            piece_index = self.chess.chess_pieces.pieces[piece_name]
-            cell = self.chess.chess_pieces.cells[piece_index]
-            piece_img = self.chess.chess_pieces.spritesheet.subsurface(cell)
-            piece_img = pygame.transform.scale(piece_img, (piece_size, piece_size))
-            self.screen.blit(piece_img, scaled_pos)
+            
+            if piece_name in self.chess.chess_pieces.pieces:
+                piece_index = self.chess.chess_pieces.pieces[piece_name]
+                cell = self.chess.chess_pieces.cells[piece_index]
+                piece_img = self.chess.chess_pieces.spritesheet.subsurface(cell)
+                piece_img = pygame.transform.scale(piece_img, (piece_size, piece_size))
+                self.screen.blit(piece_img, scaled_pos)
 
     def game(self):
         self.screen.fill((0, 0, 0))
@@ -368,8 +386,12 @@ class Game:
             if play_btn_rect.collidepoint(mouse_coords):
                 self.menu_showed = True
             elif settings_btn_rect.collidepoint(mouse_coords):
-                settings_menu = SettingsMenu(self.screen)
-                settings_menu.run()
+                # Use the new Bot Selection Menu
+                bot_menu = BotSelectionMenu(self.screen)
+                action = bot_menu.run()
+                if action == "play":
+                    self.menu_showed = True
+                
         elif pygame.key.get_pressed()[K_RETURN]:
             self.menu_showed = True
 

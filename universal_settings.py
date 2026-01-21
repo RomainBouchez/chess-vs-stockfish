@@ -17,7 +17,8 @@ class UniversalEngineSettings:
 
         # Paramètres spécifiques à Stockfish
         self.stockfish_options = {
-            "skill_level": {"min": 0, "max": 20, "default": 15, "description": "Niveau de jeu"},
+            "UCI_LimitStrength": {"min": False, "max": True, "default": False, "description": "Limiter la force"},
+            "UCI_Elo": {"min": 1350, "max": 2850, "default": 2000, "description": "Elo cible (1350-2850)"},
             "move_overhead": {"min": 0, "max": 1000, "default": 10, "description": "Compensation lag (ms)"}
         }
 
@@ -52,6 +53,15 @@ class UniversalEngineSettings:
                 return f.read().strip()
         except:
             return "legacy_stockfish"
+
+    def select_engine_by_name(self, name_part):
+        """Sélectionne un moteur dont le nom contient name_part (ex: 'Stockfish')"""
+        # Chercher dans engine_settings ou selected_engine
+        # Ici on fait simple: on écrit dans le fichier si on trouve un dossier correspondant
+        # Ce n'est pas parfait mais suffisant pour le fix 'Stockfish'
+        if name_part.lower() == "stockfish":
+             with open("selected_engine.txt", "w") as f:
+                    f.write("stockfish_latest")
 
     def get_engine_type(self, engine_id=None):
         """Détermine le type de moteur pour adapter les paramètres"""
@@ -172,9 +182,14 @@ class UniversalEngineSettings:
             return self.get_elo_from_level(settings["elo_level"], engine_type)
 
         # Sinon, calculer depuis les autres paramètres
-        if engine_type == "stockfish" and "skill_level" in settings:
-            skill_level = settings["skill_level"]
-            return self.elo_mappings["stockfish"].get(skill_level, 2000)
+        if engine_type == "stockfish":
+            # Si le mode LimitStrength est activé, retourner l'UCI_Elo
+            if settings.get("UCI_LimitStrength", False) and "UCI_Elo" in settings:
+                return settings["UCI_Elo"]
+            
+            # Legacy ou mode max force
+            skill_level = settings.get("skill_level", 20)
+            return self.elo_mappings["stockfish"].get(skill_level, 3200)
         else:
             # Pour les autres moteurs, utiliser un niveau moyen par défaut
             if engine_type == "leela":
@@ -199,11 +214,21 @@ class UniversalEngineSettings:
         engine_type = self.get_engine_type(engine_id)
 
         if engine_type == "stockfish":
-            # Pour Stockfish, ajuster le skill level
-            closest_skill = min(self.elo_mappings["stockfish"].keys(),
-                              key=lambda k: abs(self.elo_mappings["stockfish"][k] - target_elo))
-            self.set_engine_setting("skill_level", closest_skill, engine_id)
-            self.set_engine_setting("elo_level", closest_skill, engine_id)
+            # Pour Stockfish, utiliser UCI_LimitStrength et UCI_Elo
+            # Plage UCI_Elo supportée par Stockfish : 1350 - 2850
+            
+            # Si on veut la force max (>= 3100 ou proche du max mapping), on désactive la limite
+            if target_elo >= 3100: # Le mapping monte jusqu'à 3200
+                 self.set_engine_setting("UCI_LimitStrength", False, engine_id)
+            else:
+                self.set_engine_setting("UCI_LimitStrength", True, engine_id)
+                # S'assurer que l'Elo est dans les bornes pour l'option UCI
+                clamped_elo = max(1350, min(target_elo, 2850))
+                self.set_engine_setting("UCI_Elo", clamped_elo, engine_id)
+                
+            # Réinitialiser les limites artificielles pour laisser le moteur gérer son temps/profondeur
+            self.set_engine_setting("time_limit", self.universal_options["time_limit"]["default"], engine_id)
+            self.set_engine_setting("depth_limit", self.universal_options["depth_limit"]["default"], engine_id)
         elif engine_type == "leela":
             # Pour Leela, trouver le niveau le plus proche
             closest_level = min(self.elo_mappings["leela"].keys(),
@@ -256,8 +281,16 @@ class UniversalEngineSettings:
 
         # Options spécifiques à Stockfish
         if engine_type == "stockfish":
-            if "skill_level" in settings:
+            # Skill Level est maintenu pour compatibilité si UCI_LimitStrength est off
+            if "skill_level" in settings and not settings.get("UCI_LimitStrength", False):
                 uci_config["Skill Level"] = settings["skill_level"]
+            
+            if "UCI_LimitStrength" in settings:
+                 uci_config["UCI_LimitStrength"] = str(settings["UCI_LimitStrength"]).lower()
+            
+            if "UCI_Elo" in settings:
+                uci_config["UCI_Elo"] = settings["UCI_Elo"]
+                
             if "move_overhead" in settings:
                 uci_config["Move Overhead"] = settings["move_overhead"]
 
