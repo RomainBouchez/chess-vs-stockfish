@@ -136,45 +136,60 @@ def initialize_pvp_game_state():
         return False
 
 if __name__ == "__main__":
-    game_mode = main_menu()
+    while True:
+        game_mode = main_menu()
 
-    if game_mode == 'pve':
-        # For PVE, we run the game in the current process as before.
-        # Ask the user which color they want (White/Black/Random)
-        print("Starting Player vs AI game... selecting player color")
-        pygame.display.init()
-        screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-        player_color = choose_color_modal(screen)
-        print(f"Player chose: {player_color}")
-        game = Game(mode='pve', player_color=player_color)
-        game.start_game()
+        if game_mode is None: # User closed the menu
+            break
 
-    elif game_mode == 'pvp':
-        # For PVP, we launch two new, separate processes.
-        print("Launching Player vs Player mode...")
-        
-        # 1. Prepare the communication file
-        if not initialize_pvp_game_state():
-            pygame.quit()
-            sys.exit(1)
-
-        # 2. Get the path to the python interpreter and the script to run
-        python_executable = sys.executable
-        # The script to run is the one containing the Game class.
-        script_to_run = "game_with_stockfish.py"
-
-        try:
-            # 3. Launch the two clients, passing 'pvp' mode and the player color as arguments
-            print("Launching White player window...")
-            subprocess.Popen([python_executable, script_to_run, 'pvp', 'WHITE'])
+        if game_mode == 'pve':
+            # For PVE, we run the game in the current process as before.
+            # Ask the user which color they want (White/Black/Random)
+            print("Starting Player vs AI game... selecting player color")
+            pygame.display.init() # Ensure init is active for modal
+            screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+            player_color = choose_color_modal(screen)
             
-            print("Launching Black player window...")
-            subprocess.Popen([python_executable, script_to_run, 'pvp', 'BLACK'])
+            # If user closes the color modal, it returns None? The logic above quits if None. 
+            # choose_color_modal exits sys if quit. So this is fine.
+            
+            print(f"Player chose: {player_color}")
+            game = Game(mode='pve', player_color=player_color)
+            game.start_game()
+            # start_game will now return when "Home" is confirmed, letting the loop restart.
 
-        except Exception as e:
-            print(f"[CRITICAL ERROR] Failed to launch game clients: {e}")
-            pygame.quit()
-            sys.exit(1)
+        elif game_mode == 'pvp':
+            # For PVP, we launch two new, separate processes.
+            print("Launching Player vs Player mode...")
+            
+            # 1. Prepare the communication file
+            if not initialize_pvp_game_state():
+                pygame.quit()
+                sys.exit(1)
+
+            # 2. Get the path to the python interpreter and the script to run
+            python_executable = sys.executable
+            # The script to run is the one containing the Game class.
+            script_to_run = "game_with_stockfish.py"
+
+            try:
+                # 3. Launch the two clients, passing 'pvp' mode and the player color as arguments
+                print("Launching White player window...")
+                subprocess.Popen([python_executable, script_to_run, 'pvp', 'WHITE'])
+                
+                print("Launching Black player window...")
+                subprocess.Popen([python_executable, script_to_run, 'pvp', 'BLACK'])
+
+            except Exception as e:
+                print(f"[CRITICAL ERROR] Failed to launch game clients: {e}")
+                pygame.quit()
+                sys.exit(1)
+            
+            # For PVP, the launcher exits/returns to menu immediately?
+            # It should probably just go back to menu or wait?
+            # Existing behavior was "Launcher is exiting."
+            # We will just continue (loop back to menu).
+            pass
 
     # The launcher's job is done, it can now close.
     print("Launcher is exiting.")

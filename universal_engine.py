@@ -122,6 +122,50 @@ class UniversalEngine:
                 self.engine = None
             return False
     
+    def apply_settings(self, elo=None, skill_level=None):
+        """Met à jour les paramètres et reconfigure le moteur à chaud"""
+        if not self.engine_name:
+            self.engine_path, self.engine_name = self.get_selected_engine_path()
+            
+        # Update settings in persistence layer
+        if elo is not None:
+            self.universal_settings.set_elo_for_engine(int(elo), self.engine_name)
+        
+        # Save change
+        self.universal_settings.save_settings()
+
+        # Re-apply to running engine
+        if self.engine:
+            try:
+                engine_config = self.universal_settings.get_uci_config(self.engine_name)
+                # Filter supported options only
+                supported_config = {}
+                for option, value in engine_config.items():
+                    if option in self.engine.options:
+                        supported_config[option] = value
+                
+                if supported_config:
+                    self.engine.configure(supported_config)
+                    print(f"Paramètres mis à jour: {supported_config}")
+                return True
+            except Exception as e:
+                print(f"[ERREUR] Mise à jour configuration échouée: {e}")
+                return False
+        return True # Settings saved but engine not running, effectively success for next run
+
+    def get_settings(self):
+        """Retourne les paramètres actuels"""
+        if not self.engine_name:
+             self.engine_path, self.engine_name = self.get_selected_engine_path()
+             
+        engine_id = self.engine_name if self.engine_name else "legacy_stockfish"
+        current_elo = self.universal_settings.get_elo_for_engine(engine_id)
+        
+        return {
+            "elo": current_elo,
+            "engine": engine_id
+        }
+
     def get_best_move(self, fen):
         """Obtient le meilleur coup pour une position FEN donnée"""
         if not self.engine and not self.initialize():

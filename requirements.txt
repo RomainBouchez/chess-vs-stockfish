@@ -9,3 +9,6 @@ stockfish>=2.4.5
 # Optional dependencies (for robot integration)
 # Uncomment the line below if you plan to use the robot chess controller
 pyserial>=3.5
+fastapi>=0.109.0
+uvicorn>=0.27.0
+python-socketio>=5.11.0

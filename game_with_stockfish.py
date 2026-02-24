@@ -27,13 +27,17 @@ class Game:
         self.robot_thread = None
         self.robot_move_complete_event = Event()
 
-        screen_width = 640
+        # Updated Resolution for side buttons
+        screen_width = 800
         screen_height = 750
         self.resources = "res"
         pygame.init()
         self.screen = pygame.display.set_mode([screen_width, screen_height])
         self.clock = pygame.time.Clock()
 
+        # UI State
+        self.show_home_confirm_modal = False
+        
         if self.mode == 'pvp':
             window_title = f"Chess 1v1 - {self.player_color.title()} Player"
         else:
@@ -56,7 +60,15 @@ class Game:
             self.is_my_turn = (self.player_color == 'WHITE' and not self.last_read_move)
         
         self.menu_showed = self.mode == 'pvp'
+        self.game_over_start_time = None
+        self.show_game_over_modal = True
 
+    def reset_game_state(self):
+        self.chess.reset()
+        self.menu_showed = False
+        self.game_over_start_time = None
+        self.show_game_over_modal = True
+        self.show_home_confirm_modal = False
     def read_last_move(self):
         if not os.path.exists(self.move_file): return ""
         try:
@@ -145,7 +157,9 @@ class Game:
             self.robot_controller = None
 
     def start_game(self):
-        self.board_offset_x, self.board_offset_y = 0, 50
+        # Center the board in 800px width
+        self.board_offset_x = (800 - 480) // 2
+        self.board_offset_y = 100
         self.board_dimensions = (self.board_offset_x, self.board_offset_y)
         
         try:
@@ -173,26 +187,237 @@ class Game:
         if self.enable_robot:
             self.init_robot()
 
+        winner = None
         while self.running:
             self.clock.tick(30)
             for event in pygame.event.get():
                 if event.type == pygame.QUIT or (event.type == KEYDOWN and event.key == K_ESCAPE):
                     self.running = False
                 if event.type == KEYDOWN and event.key == K_SPACE and self.mode == 'pve':
-                    self.chess.reset()
-                    self.menu_showed = False
+                    self.reset_game_state()
+                
+                if event.type == MOUSEBUTTONDOWN:
+                    # Handle Home/Confirm Modals
+                    if self.show_home_confirm_modal:
+                        if self.handle_home_confirm_click(event.pos):
+                            # The handle function might set self.running = False
+                            continue
+                        continue # Modal is open, ignore other clicks
+
+                    # Handle Game Over Modal
+                    if winner and self.show_game_over_modal and pygame.time.get_ticks() - self.game_over_start_time >= 3000:
+                         if self.handle_modal_click(event.pos):
+                             continue
+                    
+                    # Handle UI Buttons (only if no modals are open and game is running)
+                    if not self.menu_showed and not winner and not self.show_home_confirm_modal:
+                        btn_action = self.handle_ui_buttons_click(event.pos)
+                        if btn_action == "home":
+                            self.show_home_confirm_modal = True
+                        elif btn_action == "settings":
+                            self.open_settings_menu()
 
             winner = self.chess.get_winner()
 
             if not self.menu_showed:
                 self.pve_menu()
             elif winner:
-                self.declare_winner(winner)
+                if self.game_over_start_time is None:
+                    self.game_over_start_time = pygame.time.get_ticks()
+                
+                # Show the board for 3 seconds before showing the winner screen/modal
+                if pygame.time.get_ticks() - self.game_over_start_time < 3000:
+                    self.game(read_only=True)
+                else:
+                    self.game(read_only=True)
+                    if self.show_game_over_modal:
+                        self.render_game_over_modal(winner)
             else:
                 self.game()
+            
+            # Draw UI Confirm Modal ON TOP of everything
+            if self.show_home_confirm_modal:
+                self.render_home_confirm_modal()
 
             pygame.display.flip()
         pygame.quit()
+
+    def handle_modal_click(self, mouse_pos):
+        """Returns True if an action was taken"""
+        SCREEN_WIDTH = self.screen.get_width()
+        SCREEN_HEIGHT = self.screen.get_height()
+        
+        # Re-calculate rects (should match render_game_over_modal)
+        modal_width, modal_height = 400, 300
+        modal_x = (SCREEN_WIDTH - modal_width) // 2
+        modal_y = (SCREEN_HEIGHT - modal_height) // 2
+        
+        btn_width, btn_height = 200, 50
+        new_game_rect = pygame.Rect((SCREEN_WIDTH - btn_width) // 2, modal_y + 150, btn_width, btn_height)
+        close_rect = pygame.Rect((SCREEN_WIDTH - btn_width) // 2, modal_y + 220, btn_width, btn_height)
+        
+        if new_game_rect.collidepoint(mouse_pos):
+            self.reset_game_state()
+            return True
+        elif close_rect.collidepoint(mouse_pos):
+            self.show_game_over_modal = False
+            return True
+        return False
+
+    def render_game_over_modal(self, winner):
+        SCREEN_WIDTH = self.screen.get_width()
+        SCREEN_HEIGHT = self.screen.get_height()
+        
+        # Semi-transparent overlay
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180)) # Black with alpha
+        self.screen.blit(overlay, (0,0))
+        
+        # Modal Box
+        modal_width, modal_height = 400, 300
+        modal_x = (SCREEN_WIDTH - modal_width) // 2
+        modal_y = (SCREEN_HEIGHT - modal_height) // 2
+        
+        pygame.draw.rect(self.screen, (40, 40, 40), (modal_x, modal_y, modal_width, modal_height), border_radius=15)
+        pygame.draw.rect(self.screen, (100, 100, 100), (modal_x, modal_y, modal_width, modal_height), 2, border_radius=15)
+        
+        # Text
+        font_big = pygame.font.SysFont("sans-serif", 50)
+        font_small = pygame.font.SysFont("sans-serif", 30)
+        
+        if winner == "Draw": text = "Draw!"
+        elif winner.upper() == self.player_color: text = "You Win!"
+        else: text = "You Lose!"
+        
+        text_surf = font_big.render(text, True, (255, 255, 255))
+        text_rect = text_surf.get_rect(center=(SCREEN_WIDTH // 2, modal_y + 60))
+        self.screen.blit(text_surf, text_rect)
+        
+        # Buttons
+        btn_width, btn_height = 200, 50
+        new_game_rect = pygame.Rect((SCREEN_WIDTH - btn_width) // 2, modal_y + 150, btn_width, btn_height)
+        close_rect = pygame.Rect((SCREEN_WIDTH - btn_width) // 2, modal_y + 220, btn_width, btn_height)
+        
+        # Draw Buttons
+        mouse_pos = pygame.mouse.get_pos()
+        
+        # New Game Button
+        color = (60, 180, 60) if new_game_rect.collidepoint(mouse_pos) else (50, 150, 50)
+        pygame.draw.rect(self.screen, color, new_game_rect, border_radius=8)
+        btn_text = font_small.render("New Game", True, (255, 255, 255))
+        self.screen.blit(btn_text, btn_text.get_rect(center=new_game_rect.center))
+
+        # Close Button
+        color = (180, 60, 60) if close_rect.collidepoint(mouse_pos) else (150, 50, 50)
+        pygame.draw.rect(self.screen, color, close_rect, border_radius=8)
+        btn_text = font_small.render("Close", True, (255, 255, 255))
+        self.screen.blit(btn_text, btn_text.get_rect(center=close_rect.center))
+
+    def render_home_confirm_modal(self):
+        SCREEN_WIDTH = self.screen.get_width()
+        SCREEN_HEIGHT = self.screen.get_height()
+        
+        # Semi-transparent overlay
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 200)) 
+        self.screen.blit(overlay, (0,0))
+        
+        # Modal Box
+        modal_width, modal_height = 500, 250
+        modal_x = (SCREEN_WIDTH - modal_width) // 2
+        modal_y = (SCREEN_HEIGHT - modal_height) // 2
+        
+        pygame.draw.rect(self.screen, (50, 50, 50), (modal_x, modal_y, modal_width, modal_height), border_radius=15)
+        pygame.draw.rect(self.screen, (200, 50, 50), (modal_x, modal_y, modal_width, modal_height), 2, border_radius=15)
+        
+        # Texts
+        font_big = pygame.font.SysFont("sans-serif", 35)
+        font_small = pygame.font.SysFont("sans-serif", 25)
+        
+        text1 = font_big.render("Return to Main Menu?", True, (255, 255, 255))
+        text2 = font_small.render("Current game progress will be lost.", True, (200, 200, 200))
+        
+        self.screen.blit(text1, text1.get_rect(center=(SCREEN_WIDTH // 2, modal_y + 60)))
+        self.screen.blit(text2, text2.get_rect(center=(SCREEN_WIDTH // 2, modal_y + 100)))
+        
+        # Buttons
+        btn_width, btn_height = 150, 50
+        gap = 40
+        yes_x = (SCREEN_WIDTH - (2*btn_width + gap)) // 2
+        no_x = yes_x + btn_width + gap
+        btn_y = modal_y + 160
+        
+        self.home_yes_rect = pygame.Rect(yes_x, btn_y, btn_width, btn_height)
+        self.home_no_rect = pygame.Rect(no_x, btn_y, btn_width, btn_height)
+        
+        mouse_pos = pygame.mouse.get_pos()
+        
+        # Yes Button
+        c_yes = (200, 60, 60) if self.home_yes_rect.collidepoint(mouse_pos) else (160, 50, 50)
+        pygame.draw.rect(self.screen, c_yes, self.home_yes_rect, border_radius=8)
+        yes_txt = font_small.render("Yes, Quit", True, (255, 255, 255))
+        self.screen.blit(yes_txt, yes_txt.get_rect(center=self.home_yes_rect.center))
+        
+        # No Button
+        c_no = (100, 100, 100) if self.home_no_rect.collidepoint(mouse_pos) else (80, 80, 80)
+        pygame.draw.rect(self.screen, c_no, self.home_no_rect, border_radius=8)
+        no_txt = font_small.render("Cancel", True, (255, 255, 255))
+        self.screen.blit(no_txt, no_txt.get_rect(center=self.home_no_rect.center))
+
+    def handle_home_confirm_click(self, mouse_pos):
+        if hasattr(self, 'home_yes_rect') and self.home_yes_rect.collidepoint(mouse_pos):
+            self.running = False # Exit game loop -> returns to main_stockfish loop
+            return True
+        if hasattr(self, 'home_no_rect') and self.home_no_rect.collidepoint(mouse_pos):
+            self.show_home_confirm_modal = False
+            return True
+        return False
+
+    def get_ui_rects(self):
+        SCREEN_WIDTH = self.screen.get_width()
+        # Home: Top Left
+        home_rect = pygame.Rect(20, 20, 100, 40)
+        # Settings: Top Right
+        settings_rect = pygame.Rect(SCREEN_WIDTH - 120, 20, 100, 40)
+        return home_rect, settings_rect
+
+    def draw_ui_buttons(self):
+        home_rect, settings_rect = self.get_ui_rects()
+        mouse_pos = pygame.mouse.get_pos()
+        font = pygame.font.SysFont("sans-serif", 20)
+        
+        # Home
+        c_home = (100, 100, 100) if home_rect.collidepoint(mouse_pos) else (60, 60, 60)
+        pygame.draw.rect(self.screen, c_home, home_rect, border_radius=5)
+        t_home = font.render("Home", True, (255, 255, 255))
+        self.screen.blit(t_home, t_home.get_rect(center=home_rect.center))
+        
+        # Settings
+        c_set = (100, 100, 100) if settings_rect.collidepoint(mouse_pos) else (60, 60, 60)
+        pygame.draw.rect(self.screen, c_set, settings_rect, border_radius=5)
+        t_set = font.render("Settings", True, (255, 255, 255))
+        self.screen.blit(t_set, t_set.get_rect(center=settings_rect.center))
+
+    def handle_ui_buttons_click(self, mouse_pos):
+        home_rect, settings_rect = self.get_ui_rects()
+        if home_rect.collidepoint(mouse_pos):
+            return "home"
+        if settings_rect.collidepoint(mouse_pos):
+            return "settings"
+        return None
+
+    def open_settings_menu(self):
+        # Pause game is implicitly done because we take control of the screen loop
+        try:
+             # Just instantiate and run. Check if SettingsMenu needs params.
+             # It imports engine, so hopefully it's self-contained.
+             settings_menu = SettingsMenu(self.screen) 
+             settings_menu.run() 
+             # When run() returns, we are back.
+             # We might need to re-init some display things if SettingsMenu messed it up, 
+             # but usually pygame surface persists.
+        except Exception as e:
+            print(f"Error opening settings: {e}")
 
     def check_for_opponent_move(self):
         current_move_in_file = self.read_last_move()
@@ -265,8 +490,12 @@ class Game:
                 piece_img = pygame.transform.scale(piece_img, (piece_size, piece_size))
                 self.screen.blit(piece_img, scaled_pos)
 
-    def game(self):
+    def game(self, read_only=False):
         self.screen.fill((0, 0, 0))
+        
+        # Draw UI Buttons first (background level)
+        self.draw_ui_buttons()
+
         self.screen.blit(self.board_img, self.board_dimensions)
         is_flipped = (self.player_color == 'BLACK')
         turn_font = pygame.font.SysFont("sans-serif", 24)
@@ -275,7 +504,7 @@ class Game:
         # Variable pour savoir si on doit attendre le robot après cette frame
         move_made_this_frame = False
 
-        if self.mode == 'pvp':
+        if self.mode == 'pvp' and not read_only:
             if not self.is_my_turn: self.check_for_opponent_move()
             status_text = "Your Turn" if self.is_my_turn else "Waiting for Opponent..."
             if self.is_my_turn:
@@ -284,7 +513,7 @@ class Game:
                     self.last_read_move = self.read_last_move()
                     self.is_my_turn = False
                     move_made_this_frame = True
-        else: # PVE Mode
+        elif not read_only: # PVE Mode
             human_is_white = (self.player_color == 'WHITE')
             board_turn_is_white = (self.chess.validation_board.turn == chess.WHITE)
             is_human_turn = (human_is_white and board_turn_is_white) or (not human_is_white and not board_turn_is_white)
