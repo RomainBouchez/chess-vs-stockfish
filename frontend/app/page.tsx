@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 const Chessboard = dynamic(() => import("react-chessboard").then((mod) => mod.Chessboard), {
     ssr: false
@@ -44,6 +44,11 @@ export default function Home() {
     const [capturedBlack, setCapturedBlack] = useState<string[]>([]);
     const [gameStatus, setGameStatus] = useState<string>("Ready");
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
+    const [possibleMoves, setPossibleMoves] = useState<string[]>([]);
+
+    // ResizeObserver pour boardWidth dynamique
+    const boardRef = useRef(null);
 
     useEffect(() => {
         function onGameState(state: GameState) {
@@ -51,6 +56,8 @@ export default function Home() {
             setFen(state.fen);
             const newGame = new Chess(state.fen);
             setGame(newGame);
+            setSelectedSquare(null); // Réinitialiser la sélection
+            setPossibleMoves([]); // Réinitialiser les coups possibles
             setCapturedWhite(state.white_captured);
             setCapturedBlack(state.black_captured);
 
@@ -77,22 +84,148 @@ export default function Home() {
         };
     }, []);
 
-    const onDrop = useCallback(({ sourceSquare, targetSquare }: { piece: unknown, sourceSquare: string, targetSquare: string | null }) => {
-        if (!targetSquare) return false;
+    // Fonction pour gérer le clic sur une case
+    const handleSquareClick = useCallback(({ square }: { square: string }) => {
+        console.log("Square clicked:", square);
+        
+        // Vérifier si c'est le tour des blancs
+        if (game.turn() !== 'w') {
+            console.log("Not white's turn");
+            return;
+        }
+
+        // Si aucune pièce n'est sélectionnée
+        if (!selectedSquare) {
+            const piece = game.get(square as any);
+            if (piece && piece.color === 'w') {
+                // Sélectionner une pièce blanche
+                setSelectedSquare(square);
+                const moves = game.moves({ square: square as any, verbose: true }) as any[];
+                const moveTargets = moves.map(move => move.to);
+                setPossibleMoves(moveTargets);
+                console.log("Selected piece at", square, "Possible moves:", moveTargets);
+            }
+        } else {
+            // Une pièce est déjà sélectionnée
+            if (square === selectedSquare) {
+                // Désélectionner si on clique sur la même case
+                setSelectedSquare(null);
+                setPossibleMoves([]);
+            } else if (possibleMoves.includes(square)) {
+                // Jouer le coup si c'est une destination valide
+                makeMove(selectedSquare, square);
+            } else {
+                // Sélectionner une nouvelle pièce si c'est une pièce blanche
+                const piece = game.get(square as any);
+                if (piece && piece.color === 'w') {
+                    setSelectedSquare(square);
+                    const moves = game.moves({ square: square as any, verbose: true }) as any[];
+                    const moveTargets = moves.map(move => move.to);
+                    setPossibleMoves(moveTargets);
+                    console.log("Selected new piece at", square, "Possible moves:", moveTargets);
+                } else {
+                    // Désélectionner si on clique sur une case vide ou pièce noire
+                    setSelectedSquare(null);
+                    setPossibleMoves([]);
+                }
+            }
+        }
+    }, [game, selectedSquare, possibleMoves]);
+
+    // Fonction pour jouer un coup
+    const makeMove = useCallback((from: string, to: string) => {
         try {
-            const move = game.move({
-                from: sourceSquare,
-                to: targetSquare,
+            const gameCopy = new Chess(game.fen());
+            const move = gameCopy.move({
+                from,
+                to,
                 promotion: "q",
             });
 
-            if (move === null) return false;
+            if (move === null) {
+                console.log("Invalid move");
+                return;
+            }
 
             const uci = move.from + move.to + (move.promotion ? move.promotion : "");
+            console.log("Sending move:", uci);
+            socket.emit("make_move", { uci });
+            
+            // Réinitialiser la sélection
+            setSelectedSquare(null);
+            setPossibleMoves([]);
+        } catch (error) {
+            console.error("Move error:", error);
+        }
+    }, [game]);
+
+    // Fonction pour obtenir le style d'une case
+    const getSquareStyles = useCallback(() => {
+        const styles: Record<string, any> = {};
+        
+        // Style pour la case sélectionnée
+        if (selectedSquare) {
+            styles[selectedSquare] = {
+                backgroundColor: 'rgba(59, 130, 246, 0.5)', // Bleu semi-transparent
+                boxShadow: 'inset 0 0 0 3px rgba(59, 130, 246, 0.8)'
+            };
+        }
+        
+        // Styles pour les coups possibles
+        possibleMoves.forEach(move => {
+            const piece = game.get(move as any);
+            if (piece) {
+                // Case avec pièce ennemie (capture)
+                styles[move] = {
+                    backgroundColor: 'rgba(239, 68, 68, 0.5)', // Rouge semi-transparent
+                    boxShadow: 'inset 0 0 0 3px rgba(239, 68, 68, 0.8)'
+                };
+            } else {
+                // Case vide (déplacement)
+                styles[move] = {
+                    backgroundColor: 'rgba(34, 197, 94, 0.5)', // Vert semi-transparent
+                    boxShadow: 'inset 0 0 0 3px rgba(34, 197, 94, 0.8)'
+                };
+            }
+        });
+        
+        return styles;
+    }, [selectedSquare, possibleMoves, game]);
+
+    const onDrop = useCallback(({ sourceSquare, targetSquare, piece }: { piece: any, sourceSquare: string, targetSquare: string | null }) => {
+        if (!targetSquare) return false;
+        
+        console.log("onDrop called:", { sourceSquare, targetSquare, piece, currentTurn: game.turn(), fen: game.fen() });
+        console.log("Socket connected:", socket.connected);
+        
+        // Vérifier si c'est le tour des blancs
+        if (game.turn() !== 'w') {
+            console.log("Not white's turn");
+            return false;
+        }
+        
+        try {
+            // Créer une copie du jeu pour tester le coup
+            const gameCopy = new Chess(game.fen());
+            const move = gameCopy.move({
+                from: sourceSquare,
+                to: targetSquare,
+                promotion: "q", // Promotion par défaut à dame
+            });
+
+            if (move === null) {
+                console.log("Invalid move");
+                return false;
+            }
+
+            // Si le coup est valide, l'envoyer au serveur
+            const uci = move.from + move.to + (move.promotion ? move.promotion : "");
+            console.log("Sending move:", uci);
             socket.emit("make_move", { uci });
             return true;
 
-        } catch {
+        } catch (error) {
+            console.error("Move error:", error);
             return false;
         }
     }, [game]);
@@ -108,12 +241,12 @@ export default function Home() {
     // Status badge styling
     const getStatusStyle = () => {
         if (gameStatus.includes("Checkmate")) {
-            return "bg-gradient-to-r from-amber-500/20 to-yellow-500/20 border-amber-500/30 text-amber-200 glow-amber-soft";
+            return "bg-gradient-to-r from-accent-gold/10 to-accent-gold-hover/10 border-accent-gold/30 text-accent-blue border-elegant-gold";
         }
         if (gameStatus.includes("Check")) {
-            return "bg-gradient-to-r from-red-500/20 to-rose-500/20 border-red-500/30 text-red-200 glow-red animate-pulse";
+            return "bg-gradient-to-r from-red-500/10 to-rose-500/10 border-red-500/30 text-red-600 border-elegant animate-pulse";
         }
-        return "bg-white/5 border-white/10 text-gray-300";
+        return "bg-card-background border-border-color text-foreground border-elegant";
     };
 
     const getStatusIcon = () => {
@@ -123,15 +256,7 @@ export default function Home() {
     };
 
     return (
-        <main className="h-dvh bg-gradient-animate flex flex-col font-sans select-none overflow-hidden text-white relative
-                         p-2 lg:p-8 lg:items-center lg:gap-8 lg:h-auto lg:min-h-screen lg:overflow-auto">
-
-            {/* Decorative Elements */}
-            <div className="fixed inset-0 pointer-events-none overflow-hidden">
-                <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-500/5 rounded-full blur-3xl" />
-                <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl" />
-            </div>
-
+        <main className="h-dvh bg-elegant-gradient flex flex-col font-roboto select-none overflow-hidden text-foreground relative">
             {/* Header - Compact on mobile, full on desktop */}
             <motion.header
                 initial={{ opacity: 0, y: -20 }}
@@ -144,15 +269,15 @@ export default function Home() {
                     <motion.div
                         whileHover={{ rotate: [0, -10, 10, 0] }}
                         transition={{ duration: 0.5 }}
-                        className="w-8 h-8 lg:w-12 lg:h-12 rounded-xl lg:rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center shadow-lg shadow-amber-500/30"
+                        className="w-8 h-8 lg:w-12 lg:h-12 rounded-lg lg:rounded-xl bg-gradient-to-br from-accent-gold to-accent-gold-hover flex items-center justify-center shadow-lg border-elegant-gold"
                     >
                         <Trophy className="text-white w-4 h-4 lg:w-6 lg:h-6" />
                     </motion.div>
                     <div>
-                        <h1 className="text-lg lg:text-2xl font-black tracking-tight">
-                            CHESS <span className="text-gradient-amber">PRO</span>
+                        <h1 className="text-lg lg:text-2xl font-black font-playfair tracking-tight">
+                            CHESS<span className="text-gradient-gold">ROBOT</span>
                         </h1>
-                        <p className="text-[8px] lg:text-[10px] text-gray-500 uppercase tracking-[0.2em] font-medium hidden sm:block">
+                        <p className="text-[8px] lg:text-[10px] text-foreground-muted uppercase tracking-[0.2em] font-medium hidden sm:block">
                             Stockfish 16 • Robot Integration
                         </p>
                     </div>
@@ -167,8 +292,7 @@ export default function Home() {
                         status-badge
                         px-3 py-1.5 lg:px-5 lg:py-2.5 rounded-full
                         text-xs lg:text-sm font-bold
-                        border backdrop-blur-md
-                        shadow-lg
+                        border shadow-lg
                         flex items-center gap-1.5 lg:gap-2.5
                         ${getStatusStyle()}
                     `}
@@ -236,15 +360,15 @@ export default function Home() {
                     {/* Opponent Info */}
                     <div className="flex-none flex justify-between items-center px-1">
                         <div className="flex items-center gap-2">
-                            <div className="w-6 h-6 lg:w-8 lg:h-8 rounded-lg bg-gray-800 border border-white/10 flex items-center justify-center">
+                            <div className="w-6 h-6 lg:w-8 lg:h-8 rounded-lg bg-subtle-bg border border-border-color flex items-center justify-center">
                                 <span className="text-sm lg:text-lg">🤖</span>
                             </div>
                             <div>
-                                <p className="text-xs lg:text-sm font-semibold text-gray-300">Stockfish</p>
-                                <p className="text-[8px] lg:text-[10px] text-gray-600 hidden sm:block">Engine</p>
+                                <p className="text-xs lg:text-sm font-semibold text-foreground">Stockfish</p>
+                                <p className="text-[8px] lg:text-[10px] text-foreground-muted hidden sm:block">Engine</p>
                             </div>
                         </div>
-                        <div className="flex items-center gap-0.5 bg-black/30 rounded-lg px-2 py-1 lg:px-3 lg:py-1.5 min-w-[60px] lg:min-w-[80px] justify-end">
+                        <div className="flex items-center gap-0.5 bg-subtle-bg rounded-lg px-2 py-1 lg:px-3 lg:py-1.5 min-w-[60px] lg:min-w-[80px] justify-end border border-border-color">
                             <AnimatePresence mode="popLayout">
                                 {capturedBlack.map((p, i) => (
                                     <motion.span
@@ -252,7 +376,7 @@ export default function Home() {
                                         initial={{ scale: 0, opacity: 0 }}
                                         animate={{ scale: 1, opacity: 1 }}
                                         exit={{ scale: 0, opacity: 0 }}
-                                        className="captured-piece text-sm lg:text-lg text-gray-400 -ml-1 lg:-ml-1.5 cursor-default"
+                                        className="captured-piece text-sm lg:text-lg text-foreground-muted -ml-1 lg:-ml-1.5 cursor-default"
                                         title={p}
                                     >
                                         {pieceSymbols[p] || '♟'}
@@ -263,14 +387,24 @@ export default function Home() {
                     </div>
 
                     {/* Chess Board - responsive to height on mobile */}
-                    <div className="chess-board-container flex-1 min-h-0 shadow-2xl bg-[#1a1a2e] mobile-board-wrapper lg:aspect-square lg:flex-initial">
+                    <div
+                        ref={boardRef}
+                        className="bg-card-background p-0 chess-board-container"
+                        style={{ 
+                            width: "400px",
+                            height: "400px",
+                            margin: "auto"
+                        }}
+                    >
                         <Chessboard
                             options={{
                                 position: fen,
                                 onPieceDrop: onDrop,
+                                onSquareClick: handleSquareClick,
                                 boardOrientation: "white",
-                                darkSquareStyle: { backgroundColor: "#4a5568" },
-                                lightSquareStyle: { backgroundColor: "#a0aec0" },
+                                darkSquareStyle: { backgroundColor: "#8B7355" },
+                                lightSquareStyle: { backgroundColor: "#F0D9B5" },
+                                squareStyles: getSquareStyles(),
                                 animationDurationInMs: 300,
                             }}
                         />
@@ -279,15 +413,15 @@ export default function Home() {
                     {/* Player Info */}
                     <div className="flex-none flex justify-between items-center px-1">
                         <div className="flex items-center gap-2">
-                            <div className="w-6 h-6 lg:w-8 lg:h-8 rounded-lg bg-gradient-to-br from-amber-500/20 to-orange-500/20 border border-amber-500/20 flex items-center justify-center">
-                                <Users className="w-3 h-3 lg:w-4 lg:h-4 text-amber-500" />
+                            <div className="w-6 h-6 lg:w-8 lg:h-8 rounded-lg bg-gradient-to-br from-accent-gold/10 to-accent-gold-hover/10 border border-accent-gold/20 flex items-center justify-center">
+                                <Users className="w-3 h-3 lg:w-4 lg:h-4 text-accent-gold" />
                             </div>
                             <div>
-                                <p className="text-xs lg:text-sm font-semibold text-amber-100">You</p>
-                                <p className="text-[8px] lg:text-[10px] text-gray-600 hidden sm:block">White pieces</p>
+                                <p className="text-xs lg:text-sm font-semibold text-foreground">You</p>
+                                <p className="text-[8px] lg:text-[10px] text-foreground-muted hidden sm:block">White pieces</p>
                             </div>
                         </div>
-                        <div className="flex items-center gap-0.5 bg-black/30 rounded-lg px-2 py-1 lg:px-3 lg:py-1.5 min-w-[60px] lg:min-w-[80px] justify-end">
+                        <div className="flex items-center gap-0.5 bg-subtle-bg rounded-lg px-2 py-1 lg:px-3 lg:py-1.5 min-w-[60px] lg:min-w-[80px] justify-end border border-border-color">
                             <AnimatePresence mode="popLayout">
                                 {capturedWhite.map((p, i) => (
                                     <motion.span
@@ -295,7 +429,7 @@ export default function Home() {
                                         initial={{ scale: 0, opacity: 0 }}
                                         animate={{ scale: 1, opacity: 1 }}
                                         exit={{ scale: 0, opacity: 0 }}
-                                        className="captured-piece text-sm lg:text-lg text-white -ml-1 lg:-ml-1.5 cursor-default"
+                                        className="captured-piece text-sm lg:text-lg text-foreground -ml-1 lg:-ml-1.5 cursor-default"
                                         title={p}
                                     >
                                         {pieceSymbols[p.toUpperCase()] || '♙'}
@@ -321,16 +455,16 @@ export default function Home() {
                     />
 
                     {/* Tips Card */}
-                    <Card variant="default" className="relative overflow-hidden">
-                        <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-full blur-2xl" />
+                    <Card variant="default" className="relative overflow-hidden glass border-elegant">
+                        <div className="absolute top-0 right-0 w-24 h-24 bg-accent-gold/5 rounded-full blur-2xl" />
                         <div className="relative">
                             <div className="flex items-center gap-2 mb-3">
-                                <div className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
-                                    <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
+                                <div className="w-7 h-7 rounded-lg bg-accent-gold/10 border border-accent-gold/20 flex items-center justify-center">
+                                    <Lightbulb className="w-3.5 h-3.5 text-accent-gold" />
                                 </div>
-                                <h3 className="text-sm font-semibold text-gray-300">Pro Tip</h3>
+                                <h3 className="text-sm font-semibold text-foreground font-playfair">Pro Tip</h3>
                             </div>
-                            <p className="text-xs text-gray-500 leading-relaxed">
+                            <p className="text-xs text-foreground-muted leading-relaxed font-roboto">
                                 Connect the robot to play on the physical board.
                                 Moves will synchronize automatically between the digital and physical boards.
                             </p>
