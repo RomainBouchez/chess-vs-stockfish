@@ -53,6 +53,8 @@ function PvPGame() {
     const [capturedWhite, setCapturedWhite] = useState<string[]>([]);
     const [capturedBlack, setCapturedBlack] = useState<string[]>([]);
     const [gameStatus, setGameStatus] = useState<string>("En attente");
+    const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
+    const [possibleMoves, setPossibleMoves] = useState<string[]>([]);
     const [gameOverData, setGameOverData] = useState<{ winner: string | null; forfeit?: boolean } | null>(null);
     const [disconnectTimeout, setDisconnectTimeout] = useState(60);
 
@@ -117,6 +119,8 @@ function PvPGame() {
                 setFen(state.fen);
                 const newGame = new Chess(state.fen);
                 setGame(newGame);
+                setSelectedSquare(null); // Réinitialiser la sélection
+                setPossibleMoves([]); // Réinitialiser les coups possibles
                 setCapturedWhite(state.white_captured);
                 setCapturedBlack(state.black_captured);
 
@@ -180,6 +184,114 @@ function PvPGame() {
         };
     }, [playerColor]);
 
+    const handleSquareClick = useCallback(({ square }: { square: string }) => {
+        console.log("Square clicked:", square);
+
+        if (phase !== "playing") return;
+
+        // Only allow moves on player's turn
+        const currentTurn = game.turn() === "w" ? "white" : "black";
+        if (currentTurn !== playerColor) {
+            console.log("Not player's turn");
+            return;
+        }
+
+        // Si aucune pièce n'est sélectionnée
+        if (!selectedSquare) {
+            const piece = game.get(square as any);
+            if (piece && piece.color === playerColor[0]) {
+                // Sélectionner une pièce de la bonne couleur
+                setSelectedSquare(square);
+                const moves = game.moves({ square: square as any, verbose: true }) as any[];
+                const moveTargets = moves.map(move => move.to);
+                setPossibleMoves(moveTargets);
+                console.log("Selected piece at", square, "Possible moves:", moveTargets);
+            }
+        } else {
+            // Une pièce est déjà sélectionnée
+            if (square === selectedSquare) {
+                // Désélectionner si on clique sur la même case
+                setSelectedSquare(null);
+                setPossibleMoves([]);
+            } else if (possibleMoves.includes(square)) {
+                // Jouer le coup si c'est une destination valide
+                makeMove(selectedSquare, square);
+            } else {
+                // Sélectionner une nouvelle pièce si c'est la bonne couleur
+                const piece = game.get(square as any);
+                if (piece && piece.color === playerColor[0]) {
+                    setSelectedSquare(square);
+                    const moves = game.moves({ square: square as any, verbose: true }) as any[];
+                    const moveTargets = moves.map(move => move.to);
+                    setPossibleMoves(moveTargets);
+                    console.log("Selected new piece at", square, "Possible moves:", moveTargets);
+                } else {
+                    // Désélectionner si on clique sur une case vide ou pièce adverse
+                    setSelectedSquare(null);
+                    setPossibleMoves([]);
+                }
+            }
+        }
+    }, [game, selectedSquare, possibleMoves, phase, playerColor]);
+
+    const makeMove = useCallback((from: string, to: string) => {
+        try {
+            const gameCopy = new Chess(game.fen());
+            const move = gameCopy.move({
+                from,
+                to,
+                promotion: "q",
+            });
+
+            if (move === null) {
+                console.log("Invalid move");
+                return;
+            }
+
+            const uci = move.from + move.to + (move.promotion ? move.promotion : "");
+            console.log("Sending move:", uci);
+            socket.emit("make_move", { uci });
+
+            // Réinitialiser la sélection
+            setSelectedSquare(null);
+            setPossibleMoves([]);
+        } catch (error) {
+            console.error("Move error:", error);
+        }
+    }, [game]);
+
+    const getSquareStyles = useCallback(() => {
+        const styles: Record<string, any> = {};
+
+        // Style pour la case sélectionnée
+        if (selectedSquare) {
+            styles[selectedSquare] = {
+                backgroundColor: 'rgba(59, 130, 246, 0.5)', // Bleu semi-transparent
+                boxShadow: 'inset 0 0 0 3px rgba(59, 130, 246, 0.8)'
+            };
+        }
+
+        // Styles pour les coups possibles
+        possibleMoves.forEach(move => {
+            const piece = game.get(move as any);
+            if (piece) {
+                // Case avec pièce ennemie (capture)
+                styles[move] = {
+                    backgroundColor: 'rgba(239, 68, 68, 0.5)', // Rouge semi-transparent
+                    boxShadow: 'inset 0 0 0 3px rgba(239, 68, 68, 0.8)'
+                };
+            } else {
+                // Case vide (déplacement)
+                styles[move] = {
+                    backgroundColor: 'rgba(34, 197, 94, 0.5)', // Vert semi-transparent
+                    boxShadow: 'inset 0 0 0 3px rgba(34, 197, 94, 0.8)'
+                };
+            }
+        });
+
+        return styles;
+    }, [selectedSquare, possibleMoves, game]);
+
     const onDrop = useCallback(({ sourceSquare, targetSquare }: { piece: unknown; sourceSquare: string; targetSquare: string | null }) => {
         if (!targetSquare) return false;
         if (phase !== "playing") return false;
@@ -194,6 +306,7 @@ function PvPGame() {
                 to: targetSquare,
                 promotion: "q",
             });
+
             if (move === null) return false;
 
             const uci = move.from + move.to + (move.promotion ? move.promotion : "");
@@ -202,7 +315,7 @@ function PvPGame() {
         } catch {
             return false;
         }
-    }, [game, playerColor, phase]);
+    }, [game, phase, playerColor]);
 
     const handleReady = () => {
         socket.emit("player_ready", {});
@@ -293,7 +406,7 @@ function PvPGame() {
                     </motion.div>
                     <div>
                         <h1 className="text-lg lg:text-2xl font-black tracking-tight">
-                            CHESS <span className="text-gradient-amber">PVP</span>
+                            CHESS<span className="text-gradient-amber">ROBOT</span>
                         </h1>
                         <p className="text-[8px] lg:text-[10px] text-gray-500 uppercase tracking-[0.2em] font-medium hidden sm:block">
                             Joueur vs Joueur
@@ -379,14 +492,16 @@ function PvPGame() {
                     </div>
 
                     {/* Chess Board */}
-                    <div className="chess-board-container flex-1 min-h-0 shadow-2xl bg-[#1a1a2e] mobile-board-wrapper lg:aspect-square lg:flex-initial">
+                    <div className="chess-board-container shadow-2xl bg-[#1a1a2e]" style={{ width: "400px", height: "400px", margin: "auto" }}>
                         <Chessboard
                             options={{
                                 position: fen,
                                 onPieceDrop: onDrop,
+                                onSquareClick: handleSquareClick,
                                 boardOrientation: playerColor,
-                                darkSquareStyle: { backgroundColor: "#4a5568" },
-                                lightSquareStyle: { backgroundColor: "#a0aec0" },
+                                darkSquareStyle: { backgroundColor: "#8B7355" },
+                                lightSquareStyle: { backgroundColor: "#F0D9B5" },
+                                squareStyles: getSquareStyles(),
                                 animationDurationInMs: 300,
                             }}
                         />

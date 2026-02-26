@@ -86,6 +86,13 @@ interface ReadyScreenProps {
 }
 
 export function ReadyScreen({ playerColor, onReady }: ReadyScreenProps) {
+    const [isReady, setIsReady] = useState(false);
+
+    const handleReady = () => {
+        setIsReady(true);
+        onReady();
+    };
+
     return (
         <main className="h-dvh bg-gradient-animate flex flex-col items-center justify-center p-4 text-white">
             <motion.div
@@ -107,15 +114,40 @@ export function ReadyScreen({ playerColor, onReady }: ReadyScreenProps) {
                         Vous jouez les <span className="font-semibold text-amber-400">{playerColor === "white" ? "Blancs" : "Noirs"}</span>
                     </p>
 
-                    <Button
-                        variant="primary"
-                        size="lg"
-                        onClick={onReady}
-                        className="w-full"
-                        leftIcon={<Wifi className="w-5 h-5" />}
-                    >
-                        PRET
-                    </Button>
+                    {!isReady ? (
+                        <motion.div
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                            transition={{ type: "spring", stiffness: 400, damping: 17 }}
+                        >
+                            <Button
+                                variant="primary"
+                                size="lg"
+                                onClick={handleReady}
+                                className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 shadow-lg hover:shadow-xl transform transition-all duration-200 hover:scale-105 active:scale-95"
+                                leftIcon={<Wifi className="w-5 h-5" />}
+                            >
+                                PRET
+                            </Button>
+                        </motion.div>
+                    ) : (
+                        <motion.div
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.5 }}
+                            className="flex flex-col items-center gap-3 py-4"
+                        >
+                            <motion.div
+                                animate={{ scale: [1, 1.2, 1] }}
+                                transition={{ duration: 1, repeat: Infinity }}
+                                className="w-12 h-12 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center shadow-lg"
+                            >
+                                <Wifi className="w-6 h-6 text-white" />
+                            </motion.div>
+                            <p className="text-lg font-semibold text-green-400">Vous êtes prêt</p>
+                            <p className="text-sm text-gray-400">En attente de l'adversaire...</p>
+                        </motion.div>
+                    )}
                 </Card>
             </motion.div>
         </main>
