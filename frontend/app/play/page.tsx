@@ -414,23 +414,7 @@ function PvPGame() {
                     </div>
                 </div>
 
-                <motion.div
-                    key={gameStatus}
-                    initial={{ scale: 0.9, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    className={`
-                        status-badge
-                        px-3 py-1.5 lg:px-5 lg:py-2.5 rounded-full
-                        text-xs lg:text-sm font-bold
-                        border backdrop-blur-md
-                        shadow-lg
-                        flex items-center gap-1.5 lg:gap-2.5
-                        ${getStatusStyle()}
-                    `}
-                >
-                    {getStatusIcon()}
-                    {gameStatus}
-                </motion.div>
+                {/* Status Badge - Removed from header, now above chessboard */}
             </motion.header>
 
             {/* Mobile Toolbar - Resign only */}
@@ -492,19 +476,40 @@ function PvPGame() {
                     </div>
 
                     {/* Chess Board */}
-                    <div className="chess-board-container shadow-2xl bg-[#1a1a2e]" style={{ width: "400px", height: "400px", margin: "auto" }}>
-                        <Chessboard
-                            options={{
-                                position: fen,
-                                onPieceDrop: onDrop,
-                                onSquareClick: handleSquareClick,
-                                boardOrientation: playerColor,
-                                darkSquareStyle: { backgroundColor: "#8B7355" },
-                                lightSquareStyle: { backgroundColor: "#F0D9B5" },
-                                squareStyles: getSquareStyles(),
-                                animationDurationInMs: 300,
-                            }}
-                        />
+                    <div className="flex flex-col items-center justify-center gap-4 flex-1 min-h-0">
+                        {/* Status Badge above chessboard */}
+                        <motion.div
+                            key={gameStatus}
+                            initial={{ scale: 0.9, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            className={`
+                                status-badge
+                                px-6 py-3 lg:px-8 lg:py-4 rounded-full
+                                text-sm lg:text-base font-bold
+                                border backdrop-blur-md
+                                shadow-lg
+                                flex items-center gap-3 lg:gap-4
+                                ${getStatusStyle()}
+                            `}
+                        >
+                            {getStatusIcon()}
+                            {gameStatus}
+                        </motion.div>
+
+                        <div className="chess-board-container shadow-2xl bg-[#1a1a2e]" style={{ width: "min(480px, 92vw)", height: "min(480px, 92vw)", margin: "auto" }}>
+                            <Chessboard
+                                options={{
+                                    position: fen,
+                                    onPieceDrop: onDrop,
+                                    onSquareClick: handleSquareClick,
+                                    boardOrientation: playerColor,
+                                    darkSquareStyle: { backgroundColor: "#8B7355" },
+                                    lightSquareStyle: { backgroundColor: "#F0D9B5" },
+                                    squareStyles: getSquareStyles(),
+                                    animationDurationInMs: 300,
+                                }}
+                            />
+                        </div>
                     </div>
 
                     {/* Player Info (bottom) */}
