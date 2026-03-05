@@ -1,12 +1,15 @@
 import sys
 import os
-import socket
 import asyncio
 import socketio
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+# Fix Windows asyncio subprocess bug with Python 3.8+ and Uvicorn
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 # Add root to sys.path to allow imports if run directly
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -18,32 +21,27 @@ from backend.session_manager import SessionManager
 class SettingsUpdate(BaseModel):
     elo: int = Field(..., ge=1350, le=3200)
 
+class KickRequest(BaseModel):
+    sid: str
+
+class ReorderRequest(BaseModel):
+    sid: str
+    direction: str  # "up" or "down"
+
 # -- FastAPI Setup --
 app = FastAPI()
 
-# CORS: allow localhost + LAN IP for PvP on same Wi-Fi
-ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
-try:
-    hostname = socket.gethostname()
-    local_ip = socket.gethostbyname(hostname)
-    ALLOWED_ORIGINS.append(f"http://{local_ip}:3000")
-    print(f"LAN access enabled: http://{local_ip}:3000")
-except Exception:
-    pass
-
+# CORS: allow all origins for LAN/network access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
 # -- Socket.IO Setup --
-sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins=ALLOWED_ORIGINS)
+sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
 socket_app = socketio.ASGIApp(sio, app)
 
 # -- Game & Session State --
@@ -70,8 +68,17 @@ async def reset_game():
 @app.post("/api/robot/connect")
 def connect_robot():
     global game
+    print("\n" + "="*50, flush=True)
+    print("[ROBOT-API] POST /api/robot/connect reçu", flush=True)
+    print("="*50, flush=True)
     game = GameManager(enable_robot=True)
-    return {"status": "success", "message": "Robot connection attempted"}
+    if game.robot is not None:
+        print("[ROBOT-API] ✓ Connexion réussie — robot prêt", flush=True)
+        return {"status": "success", "message": "Robot connecté"}
+    else:
+        error = game.robot_error or "Erreur inconnue"
+        print(f"[ROBOT-API] ✗ Connexion échouée : {error}", flush=True)
+        raise HTTPException(status_code=503, detail=f"Connexion échouée : {error}")
 
 @app.post("/api/robot/disconnect")
 def disconnect_robot():
@@ -89,6 +96,27 @@ async def update_settings(settings: SettingsUpdate):
     success = game.update_settings({"elo": settings.elo})
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update settings")
+    return {"status": "success"}
+
+@app.get("/api/admin/state")
+def admin_get_state():
+    return session.get_admin_state()
+
+@app.post("/api/admin/kick")
+async def admin_kick(request: KickRequest):
+    await sio.emit('kicked', {}, to=request.sid)
+    await sio.disconnect(request.sid)
+    return {"status": "success", "sid": request.sid}
+
+@app.post("/api/admin/reorder")
+async def admin_reorder(request: ReorderRequest):
+    if request.direction not in ("up", "down"):
+        raise HTTPException(status_code=400, detail="Direction must be 'up' or 'down'")
+    moved = session.reorder_queue(request.sid, request.direction)
+    if not moved:
+        raise HTTPException(status_code=404, detail="Player not found in queue or cannot move further")
+    for pos_info in session.get_queue_positions():
+        await sio.emit('queue_update', {"position": pos_info["position"]}, to=pos_info["sid"])
     return {"status": "success"}
 
 # ============================================================
@@ -120,10 +148,27 @@ async def disconnect(sid):
             await sio.emit('queue_update', {"position": pos_info["position"]}, to=pos_info["sid"])
 
     elif result["type"] == "pvp_waiting":
-        # Player left before game started, notify opponent they're waiting again
+        freed_color = result.get("color")
         opponent_sid = result.get("opponent_sid")
-        if opponent_sid:
-            await sio.emit('pvp_status', {"status": "waiting"}, to=opponent_sid)
+
+        # Try to fill the freed seat with the next queued player of that color
+        promoted = session.promote_next_in_queue(freed_color) if freed_color else None
+
+        if promoted:
+            # Check if both seats are now filled → show ready screen to both
+            other_slot = session._opponent_slot(promoted["color"])
+            if other_slot and other_slot.connected:
+                await sio.emit('pvp_status', {"status": "ready"}, to=promoted["sid"])
+                await sio.emit('pvp_status', {"status": "ready"}, to=other_slot.sid)
+            else:
+                await sio.emit('pvp_status', {"status": "waiting"}, to=promoted["sid"])
+            # Update remaining queue positions
+            for pos_info in session.get_queue_positions():
+                await sio.emit('queue_update', {"position": pos_info["position"]}, to=pos_info["sid"])
+        else:
+            # No queued player for this color — just notify opponent they're waiting again
+            if opponent_sid:
+                await sio.emit('pvp_status', {"status": "waiting"}, to=opponent_sid)
 
 
 @sio.event
@@ -293,4 +338,4 @@ async def disconnect_timeout_task(color: str):
 
 
 if __name__ == "__main__":
-    uvicorn.run("backend.server:socket_app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("backend.server:socket_app", host="0.0.0.0", port=8001, reload=True)

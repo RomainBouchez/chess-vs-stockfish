@@ -18,11 +18,12 @@
 
 1. [A Propos du Projet](#a-propos-du-projet)
 2. [Web App (Next.js + FastAPI)](#-web-app-nextjs--fastapi)
-3. [Application Desktop (Pygame)](#-application-desktop-pygame)
-4. [Integration Robot](#-integration-robot)
-5. [Structure du Projet](#-structure-du-projet)
-6. [Contribuer](#-contribuer)
-7. [Contact](#-contact)
+3. [Page Admin](#-page-admin)
+4. [Application Desktop (Pygame)](#-application-desktop-pygame)
+5. [Integration Robot](#-integration-robot)
+6. [Structure du Projet](#-structure-du-projet)
+7. [Contribuer](#-contribuer)
+8. [Contact](#-contact)
 
 ---
 
@@ -143,6 +144,47 @@ L'application web utilise une architecture 3 couches : un **frontend Next.js** c
 - **PvP (Player vs Player)** : Deux joueurs sur le meme reseau local. Chaque joueur accede a sa page selon sa couleur :
   - Blancs : `localhost:3000/play?color=white`
   - Noirs : `localhost:3000/play?color=black`
+
+---
+
+# Page Admin
+
+La page admin (`/admin`) permet de superviser et gerer les sessions en temps reel depuis n'importe quel appareil du reseau local.
+
+### Acces
+
+```
+http://localhost:3000/admin
+http://<ip-du-serveur>:3000/admin
+```
+
+Un **mot de passe** est requis a la premiere visite. La session est conservee pour l'onglet en cours (sessionStorage).
+
+### Fonctionnalites
+
+| Section | Description |
+|---|---|
+| **Stats globales** | Nombre de joueurs en partie, en file d'attente, sessions PvE actives |
+| **Partie en cours** | Etat des sieges Blanc et Noir : identifiant, statut de connexion, temps en jeu, pret ou non |
+| **File d'attente** | Liste de tous les joueurs en attente avec position, couleur demandee, temps d'attente |
+| **Reordonnancement** | Boutons ▲ / ▼ pour changer la position d'un joueur dans la file |
+| **Deconnexion** | Bouton "Kick" pour expulser n'importe quel joueur (file ou partie) |
+
+Le tableau de bord se **rafraichit automatiquement toutes les 2 secondes**.
+
+### Comportement lors d'un kick
+
+- Le joueur expulse voit un ecran "Deconnecte par l'administrateur" avec un bouton pour rejoindre la file.
+- La file d'attente est automatiquement mise a jour et les positions recalculees.
+- Si le siege libere peut etre rempli par un joueur en file, il est promu immediatement.
+
+### API Admin (backend)
+
+| Methode | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/admin/state` | Retourne l'etat complet (joueurs, file, PvE) |
+| `POST` | `/api/admin/kick` | Expulse un joueur par son `sid` |
+| `POST` | `/api/admin/reorder` | Deplace un joueur dans la file (`direction: "up"\|"down"`) |
 
 ---
 
@@ -344,38 +386,167 @@ Le dossier `G-Code_Controller/` contient un systeme complet pour controler un ro
 
 ### Fonctionnalites
 
-- Communication serie avec controleur G-Code (GRBL)
+- Communication serie avec controleur G-Code (Marlin/GRBL)
 - Detection et gestion automatique des captures (zones de stockage)
 - Gestion des coups speciaux (roque, prise en passant, promotion)
 - Electro-aimant pour saisir/relacher les pieces (commandes M3/M5)
 - Servo pronation pour la rotation des pieces
 - Calibration du plateau et des pieces
 
-### Connexion via la Web App
-
-1. Lancez le backend et le frontend
-2. Ouvrez l'interface web dans votre navigateur
-3. Cliquez sur le bouton **"Connect Robot"** dans la barre d'outils
-4. Le backend initialise la connexion serie et effectue le homing du robot (`G28`)
-5. Chaque coup joue sur l'echiquier web est automatiquement reproduit par le robot
-
-> **Note :** La connexion robot est disponible uniquement en mode PvE (Player vs Stockfish).
-
-### Configuration
-
-Editez `G-Code_Controller/robot_config.ini` pour ajuster les parametres materiels :
-
-- **Port serie** : COM5 (par defaut) @ 250000 baud
-- **Dimensions plateau** : 58.93mm par case, offset (100, 100)mm
-- **Hauteurs** : safe=50mm, grab=5mm, lift=30mm
-- **Vitesses** : deplacement=10000mm/min, travail=1500mm/min
-- **Prehenseur** : Electro-aimant (commandes M3/M5)
-
 ### Prerequis
+
+- Robot branche en USB (port **COM6**, baudrate **250000**)
+- Robot alimente (LED allumee)
+- Aucun autre logiciel n'utilise COM6 (Arduino IDE Serial Monitor, Putty, etc.)
 
 ```sh
 pip install pyserial
 ```
+
+### Connexion via la Web App
+
+1. Lancez le backend et le frontend
+2. Ouvrez `http://localhost:3000` dans votre navigateur
+3. Cliquez sur le bouton **"Connect Robot"** dans la barre d'outils
+4. Le backend ouvre le port serie, initialise le firmware et effectue le homing
+5. Chaque coup joue sur l'echiquier web est automatiquement reproduit par le robot
+
+> **Note :** La connexion robot est disponible uniquement en mode PvE (Player vs Stockfish).
+
+### Connexion via PowerShell (test direct)
+
+```powershell
+Invoke-WebRequest -Method POST -Uri "http://localhost:8001/api/robot/connect" -UseBasicParsing
+```
+
+Reponse attendue :
+```json
+{"status": "success", "message": "Robot connecte"}
+```
+
+### Architecture technique
+
+```
+Frontend (Next.js :3000)
+    │
+    │  POST /api/robot/connect
+    ▼
+Backend FastAPI (uvicorn :8001)
+  └─ server.py :: connect_robot()
+       │
+       ▼
+  game_manager.py :: GameManager(enable_robot=True)
+       │  instancie
+       ▼
+  robot_chess_controller.py :: ChessRobotController
+       │  lit la config
+       ▼
+  robot_config.ini  (port, baudrate, dimensions plateau...)
+       │
+       │  serial.Serial(port="COM6", baudrate=250000)
+       ▼
+  Firmware Marlin (Arduino) via USB
+```
+
+### Sequence de connexion detaillee
+
+1. `server.py` recoit le POST et instancie `GameManager(enable_robot=True)`
+2. `GameManager` cree un `ChessRobotController()` qui lit `robot_config.ini`
+3. `ChessRobotController.connect()` ouvre le port serie COM6 a 250000 bauds
+4. Attente de **2 secondes** (`connection_delay`) pour laisser l'Arduino rebooter
+5. Lecture du message de demarrage firmware (`start`)
+6. Envoi des commandes d'initialisation G-code :
+   ```
+   G21    → unites en millimetres
+   G90    → coordonnees absolues
+   G94    → avance en mm/min
+   F10000 → vitesse de deplacement par defaut
+   ```
+7. `home_robot()` deplace le bras en position de depart (coin a1)
+
+### Protocole serie
+
+- Chaque commande G-code est envoyee en ASCII terminee par `\n`
+- Le firmware repond `ok` pour confirmer l'execution
+- Timeout de lecture : **2 secondes** par tentative, max **10 tentatives**
+
+### Conversion coup d'echecs → G-code
+
+Un coup UCI (ex: `e2e4`) est converti en coordonnees physiques via :
+```python
+x = board_offset_x + (col * square_size)    # col = 0..7
+y = board_offset_y + (row * square_size)    # row = 0..7
+```
+Avec `square_size = 58.93 mm` et `offset = (100.0, 100.0)`.
+
+Sequence pour deplacer une piece :
+```
+G0 Z50               → monter (position safe)
+G0 X<src_x> Y<src_y> → aller au-dessus de la case source
+G0 Z5                → descendre (z_grab)
+M3 S1000             → activer l'electroaimant (grab)
+G0 Z30               → lever la piece (z_lift)
+G0 X<dst_x> Y<dst_y> → deplacer vers la case cible
+G0 Z5                → descendre
+M5                   → desactiver l'electroaimant (release)
+G0 Z50               → remonter en position safe
+```
+
+### Configuration (`robot_config.ini`)
+
+| Section | Parametre | Valeur par defaut | Description |
+|---|---|---|---|
+| `[SERIAL]` | `port` | `COM6` | Port USB de l'Arduino |
+| `[SERIAL]` | `baudrate` | `250000` | Vitesse serie (doit correspondre au firmware) |
+| `[SERIAL]` | `timeout` | `2` | Timeout lecture en secondes |
+| `[BOARD]` | `square_size` | `58.93` | Taille d'une case en mm |
+| `[BOARD]` | `board_offset_x/y` | `100.0` | Decalage origine plateau en mm |
+| `[HEIGHTS]` | `z_safe` | `50.0` | Hauteur de deplacement libre (mm) |
+| `[HEIGHTS]` | `z_grab` | `5.0` | Hauteur de saisie de piece (mm) |
+| `[HEIGHTS]` | `z_lift` | `30.0` | Hauteur de transport de piece (mm) |
+| `[GRIPPER]` | `grab_command` | `M3 S1000` | Commande activation electroaimant |
+| `[GRIPPER]` | `release_command` | `M5` | Commande desactivation electroaimant |
+| `[ROBOT]` | `use_homing` | `false` | Effectuer un homing au demarrage |
+| `[SPEEDS]` | `feed_rate_travel` | `10000` | Vitesse deplacement libre (mm/min) |
+| `[SPEEDS]` | `feed_rate_work` | `1500` | Vitesse deplacement avec piece (mm/min) |
+| `[ADVANCED]` | `connection_delay` | `2.0` | Attente apres ouverture port (s) |
+| `[ADVANCED]` | `xy_settle_delay` | `1.0` | Attente stabilisation XY (s) |
+
+### Mode debug sans robot
+
+Dans `robot_config.ini`, activer :
+```ini
+[ADVANCED]
+simulation_mode = true
+```
+
+Le backend utilise alors le `RobotDebugProxy` (`game_manager.py`) qui simule la connexion et logue toutes les commandes G-code sans rien envoyer sur le port serie.
+
+### Erreurs courantes
+
+**`PermissionError(13, 'Acces refuse.')`**
+COM6 est deja ouvert par un autre programme.
+```powershell
+# Fermer Arduino IDE, Putty, etc., puis :
+Get-Process -Name python | Stop-Process -Force
+```
+
+**`connect() a retourne False sur COM6`**
+Le port s'est ouvert mais aucun `ok` recu apres initialisation.
+- Verifier que le robot est alimente
+- Verifier le bon port dans le Gestionnaire de peripheriques Windows
+- Verifier que le baudrate du firmware correspond (250000)
+
+**Pas de logs `[ROBOT-API]` dans la console**
+Un vieux processus backend tourne encore sur le meme port.
+```powershell
+netstat -ano | findstr ":8001"
+# Puis tuer tous les python.exe et relancer le backend
+```
+
+**Le robot repond mais ne se deplace pas correctement**
+- Verifier `square_size` et `board_offset_x/y` dans `robot_config.ini`
+- Activer `simulation_mode = true` pour tester sans mouvement physique
 
 ---
 
@@ -387,6 +558,7 @@ chess-vs-stockfish/
 ├── frontend/                     # Web App (Next.js)
 │   ├── app/page.tsx              # Page PvE (vs Stockfish)
 │   ├── app/play/page.tsx         # Page PvP (1v1 en reseau)
+│   ├── app/admin/page.tsx        # Page Admin (gestion file d'attente)
 │   ├── components/               # Composants React
 │   └── lib/socket.ts             # Client Socket.IO
 │

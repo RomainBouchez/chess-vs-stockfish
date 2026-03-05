@@ -25,8 +25,14 @@ export default function GameControls({ onReset, onOpenSettings, robotConnected, 
             const res = await fetch(endpoint, { method: "POST" });
             if (res.ok) {
                 onRobotConnectionChange?.(!robotConnected);
+            } else {
+                const data = await res.json().catch(() => ({}));
+                const msg = data?.detail || `Erreur HTTP ${res.status}`;
+                alert(`Connexion robot échouée :\n${msg}`);
+                console.error("[Robot]", msg);
             }
         } catch (e) {
+            alert(`Connexion robot échouée :\n${e}`);
             console.error(e);
         } finally {
             setIsRobotLoading(false);

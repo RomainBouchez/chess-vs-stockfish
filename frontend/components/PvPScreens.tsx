@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
-import { Clock, Crown, Flag, Loader2, Users, Wifi, WifiOff, Trophy, Swords } from "lucide-react";
+import { Clock, Crown, Flag, Loader2, Users, WifiOff, Trophy, Swords } from "lucide-react";
 import { Button, Card } from "@/components/ui";
 
 interface WaitingScreenProps {
@@ -86,6 +85,13 @@ interface ReadyScreenProps {
 }
 
 export function ReadyScreen({ playerColor, onReady }: ReadyScreenProps) {
+    const [isReady, setIsReady] = useState(false);
+
+    const handleClick = () => {
+        setIsReady(true);
+        onReady();
+    };
+
     return (
         <main className="h-dvh bg-gradient-animate flex flex-col items-center justify-center p-4 text-white">
             <motion.div
@@ -94,28 +100,67 @@ export function ReadyScreen({ playerColor, onReady }: ReadyScreenProps) {
                 className="flex flex-col items-center gap-6 max-w-sm w-full"
             >
                 <motion.div
-                    animate={{ scale: [1, 1.05, 1] }}
-                    transition={{ duration: 1.5, repeat: Infinity }}
-                    className="w-20 h-20 rounded-2xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center shadow-lg glow-green"
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.5 }}
+                    className="text-center"
                 >
-                    <Swords className="w-10 h-10 text-white" />
+                    <h1 className="text-2xl font-black tracking-tight text-white">
+                        PST <span className="text-gradient-amber">joueur d&apos;échec</span>
+                    </h1>
                 </motion.div>
 
                 <Card variant="elevated" className="text-center w-full">
-                    <h2 className="text-xl font-bold mb-2">Les deux joueurs sont la !</h2>
-                    <p className="text-sm text-gray-400 mb-6">
-                        Vous jouez les <span className="font-semibold text-amber-400">{playerColor === "white" ? "Blancs" : "Noirs"}</span>
-                    </p>
-
-                    <Button
-                        variant="primary"
-                        size="lg"
-                        onClick={onReady}
-                        className="w-full"
-                        leftIcon={<Wifi className="w-5 h-5" />}
+                    <motion.div
+                        key={isReady ? "ready" : "waiting"}
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.3 }}
                     >
-                        PRET
-                    </Button>
+                        <h2 className="text-xl font-bold mb-2">
+                            {isReady ? "Vous êtes prêt !" : "Les deux joueurs sont là !"}
+                        </h2>
+                        <p className="text-sm text-gray-400 mb-6">
+                            {isReady
+                                ? <span className="text-amber-400 font-semibold">En attente de l&apos;adversaire...</span>
+                                : <>Vous jouez les <span className="font-semibold text-amber-400">{playerColor === "white" ? "Blancs" : "Noirs"}</span></>
+                            }
+                        </p>
+                    </motion.div>
+
+                    <div className="flex justify-center">
+                        {!isReady ? (
+                            <Button
+                                variant="primary"
+                                size="lg"
+                                onClick={handleClick}
+                                className="px-10"
+                            >
+                                PRÊT
+                            </Button>
+                        ) : (
+                            <Button
+                                variant="primary"
+                                size="lg"
+                                disabled
+                                className="px-10 opacity-40 cursor-not-allowed"
+                                leftIcon={
+                                    <div className="flex items-center gap-1">
+                                        {[0, 1, 2].map((i) => (
+                                            <motion.div
+                                                key={i}
+                                                className="w-1.5 h-1.5 rounded-full bg-white"
+                                                animate={{ opacity: [0.3, 1, 0.3] }}
+                                                transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }}
+                                            />
+                                        ))}
+                                    </div>
+                                }
+                            >
+                                Attente du joueur adverse
+                            </Button>
+                        )}
+                    </div>
                 </Card>
             </motion.div>
         </main>
@@ -179,12 +224,7 @@ export function GameOverScreen({ winner, playerColor, forfeit, onTimerComplete }
     const isWinner = winner === playerColor;
     const isDraw = winner === "draw";
 
-    const [mounted, setMounted] = useState(false);
     const [timer, setTimer] = useState(30);
-
-    useEffect(() => {
-        setMounted(true);
-    }, []);
 
     useEffect(() => {
         if (timer <= 0) {
@@ -197,26 +237,29 @@ export function GameOverScreen({ winner, playerColor, forfeit, onTimerComplete }
         return () => clearInterval(interval);
     }, [timer, onTimerComplete]);
 
-    console.log("GameOverScreen render check:", { mounted, winner, playerColor, forfeit, isWinner, isDraw, timer });
-
     const getMessage = () => {
         if (isDraw) return "Match nul !";
-        if (forfeit) return isWinner ? "Victoire par forfait !" : "Defaite par forfait";
-        return isWinner ? "Victoire !" : "Defaite";
+        if (forfeit) return isWinner ? "Victoire par forfait !" : "Défaite par forfait";
+        return isWinner ? "Victoire !" : "Défaite";
     };
 
-    if (!mounted) {
-        console.log("GameOverScreen: not mounted yet");
-        return null;
-    }
-
     return (
-        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+        <div style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            backgroundColor: "rgba(0,0,0,0.55)",
+            backdropFilter: "blur(8px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "1rem",
+        }}>
             <motion.div
                 initial={{ opacity: 0, scale: 0.8 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ type: "spring", stiffness: 300, damping: 20 }}
-                className="max-w-sm w-full relative z-[101]"
+                style={{ maxWidth: "24rem", width: "100%", position: "relative", zIndex: 10000 }}
             >
                 <Card variant="elevated" className="text-center shadow-2xl border-white/20">
                     <motion.div
@@ -254,23 +297,24 @@ export function GameOverScreen({ winner, playerColor, forfeit, onTimerComplete }
                         </p>
                     )}
 
-                    <div className="mt-8 pt-6 border-t border-white/10 space-y-4">
-                        <Button
-                            variant="primary"
-                            className="w-full bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 font-bold py-6 text-lg"
-                            onClick={onTimerComplete}
-                        >
-                            REJOUER
-                        </Button>
-
+                    <div className="mt-6 space-y-3">
+                        <div className="flex justify-center">
+                            <Button
+                                variant="primary"
+                                size="lg"
+                                className="px-10"
+                                onClick={onTimerComplete}
+                            >
+                                REJOUER
+                            </Button>
+                        </div>
                         <p className="text-xs text-gray-500 flex items-center justify-center gap-2">
                             <Clock className="w-3 h-3 animate-pulse" />
-                            <span>
-                                Retour automatique dans{" "}
-                                <span className="font-bold text-amber-500">{timer}s</span>
-                            </span>
+                            Retour automatique dans{" "}
+                            <span className="font-bold text-amber-500">{timer}s</span>
                         </p>
                     </div>
+
                 </Card>
             </motion.div>
         </div>

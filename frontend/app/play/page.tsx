@@ -7,8 +7,8 @@ const Chessboard = dynamic(() => import("react-chessboard").then((mod) => mod.Ch
     ssr: false
 });
 import { Chess } from "chess.js";
-import { socket } from "@/lib/socket";
-import { Trophy, Users, Shield, Swords, Crown, Flag } from "lucide-react";
+import { socket, BACKEND_API } from "@/lib/socket";
+import { Trophy, Users, Shield, Swords, Crown, Flag, Bot, Wifi } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
     WaitingScreen,
@@ -40,7 +40,7 @@ const pieceSymbols: Record<string, string> = {
     'k': '♚', 'K': '♔'
 };
 
-type PvPPhase = "connecting" | "waiting" | "queued" | "ready" | "playing" | "game_over" | "opponent_disconnected";
+type PvPPhase = "connecting" | "waiting" | "queued" | "ready" | "playing" | "game_over" | "opponent_disconnected" | "kicked";
 
 function PvPGame() {
     const searchParams = useSearchParams();
@@ -55,6 +55,10 @@ function PvPGame() {
     const [gameStatus, setGameStatus] = useState<string>("En attente");
     const [gameOverData, setGameOverData] = useState<{ winner: string | null; forfeit?: boolean } | null>(null);
     const [disconnectTimeout, setDisconnectTimeout] = useState(60);
+    const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
+    const [possibleMoves, setPossibleMoves] = useState<string[]>([]);
+    const [robotConnected, setRobotConnected] = useState(false);
+    const [isRobotLoading, setIsRobotLoading] = useState(false);
 
     console.log("PvPGame Render:", { phase, hasGameOverData: !!gameOverData });
 
@@ -117,6 +121,8 @@ function PvPGame() {
                 setFen(state.fen);
                 const newGame = new Chess(state.fen);
                 setGame(newGame);
+                setSelectedSquare(null);
+                setPossibleMoves([]);
                 setCapturedWhite(state.white_captured);
                 setCapturedBlack(state.black_captured);
 
@@ -157,12 +163,18 @@ function PvPGame() {
             setQueuePosition(data.position);
         }
 
+        function onKicked() {
+            socket.disconnect();
+            setPhase("kicked");
+        }
+
         socket.on("pvp_status", onPvpStatus);
         socket.on("game_start", onGameStart);
         socket.on("game_state", onGameState);
         socket.on("opponent_disconnected", onOpponentDisconnected);
         socket.on("opponent_reconnected", onOpponentReconnected);
         socket.on("queue_update", onQueueUpdate);
+        socket.on("kicked", onKicked);
 
         // Join PvP on connect
         const doJoin = () => socket.emit("join_pvp", { color: playerColor });
@@ -176,28 +188,84 @@ function PvPGame() {
             socket.off("opponent_disconnected", onOpponentDisconnected);
             socket.off("opponent_reconnected", onOpponentReconnected);
             socket.off("queue_update", onQueueUpdate);
+            socket.off("kicked", onKicked);
             socket.off("connect", doJoin);
         };
     }, [playerColor]);
 
+    const makeMove = useCallback((from: string, to: string) => {
+        try {
+            const gameCopy = new Chess(game.fen());
+            const move = gameCopy.move({ from, to, promotion: "q" });
+            if (move === null) return;
+            const uci = move.from + move.to + (move.promotion ? move.promotion : "");
+            socket.emit("make_move", { uci });
+            setSelectedSquare(null);
+            setPossibleMoves([]);
+        } catch { /* ignore */ }
+    }, [game]);
+
+    const handleSquareClick = useCallback(({ square }: { piece: unknown; square: string }) => {
+        if (phase !== "playing") return;
+        const currentTurn = game.turn() === "w" ? "white" : "black";
+        if (currentTurn !== playerColor) return;
+
+        const myColor = playerColor === "white" ? "w" : "b";
+
+        if (!selectedSquare) {
+            const piece = game.get(square as Parameters<typeof game.get>[0]);
+            if (piece && piece.color === myColor) {
+                setSelectedSquare(square);
+                const moves = game.moves({ square: square as Parameters<typeof game.moves>[0] extends { square?: infer S } ? S : never, verbose: true }) as { to: string }[];
+                setPossibleMoves(moves.map(m => m.to));
+            }
+        } else {
+            if (square === selectedSquare) {
+                setSelectedSquare(null);
+                setPossibleMoves([]);
+            } else if (possibleMoves.includes(square)) {
+                makeMove(selectedSquare, square);
+            } else {
+                const piece = game.get(square as Parameters<typeof game.get>[0]);
+                if (piece && piece.color === myColor) {
+                    setSelectedSquare(square);
+                    const moves = game.moves({ square: square as Parameters<typeof game.moves>[0] extends { square?: infer S } ? S : never, verbose: true }) as { to: string }[];
+                    setPossibleMoves(moves.map(m => m.to));
+                } else {
+                    setSelectedSquare(null);
+                    setPossibleMoves([]);
+                }
+            }
+        }
+    }, [game, phase, playerColor, selectedSquare, possibleMoves, makeMove]);
+
+    const getSquareStyles = useCallback(() => {
+        const styles: Record<string, object> = {};
+        if (selectedSquare) {
+            styles[selectedSquare] = { backgroundColor: 'rgba(59, 130, 246, 0.5)', boxShadow: 'inset 0 0 0 3px rgba(59, 130, 246, 0.8)' };
+        }
+        possibleMoves.forEach(sq => {
+            const piece = game.get(sq as Parameters<typeof game.get>[0]);
+            styles[sq] = piece
+                ? { backgroundColor: 'rgba(239, 68, 68, 0.5)', boxShadow: 'inset 0 0 0 3px rgba(239, 68, 68, 0.8)' }
+                : { backgroundColor: 'rgba(34, 197, 94, 0.5)', boxShadow: 'inset 0 0 0 3px rgba(34, 197, 94, 0.8)' };
+        });
+        return styles;
+    }, [selectedSquare, possibleMoves, game]);
+
     const onDrop = useCallback(({ sourceSquare, targetSquare }: { piece: unknown; sourceSquare: string; targetSquare: string | null }) => {
         if (!targetSquare) return false;
         if (phase !== "playing") return false;
-
-        // Only allow moves on player's turn
         const currentTurn = game.turn() === "w" ? "white" : "black";
         if (currentTurn !== playerColor) return false;
-
         try {
-            const move = game.move({
-                from: sourceSquare,
-                to: targetSquare,
-                promotion: "q",
-            });
+            const gameCopy = new Chess(game.fen());
+            const move = gameCopy.move({ from: sourceSquare, to: targetSquare, promotion: "q" });
             if (move === null) return false;
-
             const uci = move.from + move.to + (move.promotion ? move.promotion : "");
             socket.emit("make_move", { uci });
+            setSelectedSquare(null);
+            setPossibleMoves([]);
             return true;
         } catch {
             return false;
@@ -212,6 +280,27 @@ function PvPGame() {
         socket.emit("resign", {});
     };
 
+    const toggleRobot = async () => {
+        setIsRobotLoading(true);
+        try {
+            const endpoint = robotConnected
+                ? `${BACKEND_API}/api/robot/disconnect`
+                : `${BACKEND_API}/api/robot/connect`;
+            const res = await fetch(endpoint, { method: "POST" });
+            if (res.ok) {
+                setRobotConnected(!robotConnected);
+            } else {
+                const data = await res.json().catch(() => ({}));
+                alert(`Connexion robot échouée :\n${data?.detail || `Erreur HTTP ${res.status}`}`);
+            }
+        } catch (e) {
+            alert(`Connexion robot échouée :\n${e}`);
+        } finally {
+            setIsRobotLoading(false);
+        }
+    };
+
+
     const handleGameEndTimerComplete = () => {
         setPhase("connecting");
         setGameOverData(null);
@@ -220,13 +309,29 @@ function PvPGame() {
         setCapturedWhite([]);
         setCapturedBlack([]);
         setGameStatus("En attente");
-        // Re-join PvP logic is triggered by "connecting" -> "connect" effect or manual emission
         socket.emit("join_pvp", { color: playerColor });
     };
 
     /* eslint-enable react-hooks/rules-of-hooks */
 
     // Phase-based rendering
+    if (phase === "kicked") {
+        return (
+            <main className="h-dvh bg-gradient-animate flex items-center justify-center p-4 text-white">
+                <div className="text-center space-y-4">
+                    <div className="text-5xl">⛔</div>
+                    <h1 className="text-xl font-bold text-red-400">Déconnecté par l&apos;administrateur</h1>
+                    <p className="text-sm text-gray-400">Vous avez été retiré de la session.</p>
+                    <button
+                        onClick={() => { window.location.href = `/play?color=${playerColor}`; }}
+                        className="mt-4 px-6 py-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-sm font-semibold transition-colors"
+                    >
+                        Rejoindre la file
+                    </button>
+                </div>
+            </main>
+        );
+    }
     if (phase === "connecting" || phase === "waiting") {
         return <WaitingScreen playerColor={playerColor} />;
     }
@@ -337,6 +442,19 @@ function PvPGame() {
                     <Flag className="w-5 h-5 text-red-400" />
                     <span className="text-[10px] font-medium">Abandonner</span>
                 </button>
+
+                <button
+                    onClick={toggleRobot}
+                    disabled={isRobotLoading}
+                    className={`mobile-toolbar-btn ${robotConnected ? 'mobile-toolbar-btn-active' : ''}`}
+                    title="Robot"
+                >
+                    {robotConnected
+                        ? <Wifi className="w-5 h-5 text-green-400" />
+                        : <Bot className={`w-5 h-5 ${isRobotLoading ? 'animate-pulse' : ''}`} />
+                    }
+                    <span className="text-[10px] font-medium">{robotConnected ? 'Online' : 'Robot'}</span>
+                </button>
             </motion.div>
 
             {/* Main Content */}
@@ -384,10 +502,12 @@ function PvPGame() {
                             options={{
                                 position: fen,
                                 onPieceDrop: onDrop,
+                                onSquareClick: handleSquareClick,
                                 boardOrientation: playerColor,
                                 darkSquareStyle: { backgroundColor: "#4a5568" },
                                 lightSquareStyle: { backgroundColor: "#a0aec0" },
                                 animationDurationInMs: 300,
+                                squareStyles: getSquareStyles(),
                             }}
                         />
                     </div>
@@ -429,7 +549,7 @@ function PvPGame() {
                     transition={{ duration: 0.8, delay: 0.2 }}
                     className="hidden lg:block w-full lg:max-w-xs lg:sticky lg:top-8 space-y-6"
                 >
-                    <div className="rounded-2xl p-6" style={{
+                    <div className="rounded-2xl p-6 space-y-3" style={{
                         background: "rgba(255, 255, 255, 0.05)",
                         border: "1px solid rgba(255, 255, 255, 0.1)",
                         backdropFilter: "blur(20px)",
@@ -449,6 +569,40 @@ function PvPGame() {
                             <Flag className="w-4 h-4" />
                             Abandonner
                         </button>
+
+                        <button
+                            onClick={toggleRobot}
+                            disabled={isRobotLoading}
+                            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-semibold transition-all"
+                            style={{
+                                background: robotConnected
+                                    ? "linear-gradient(to right, #16a34a, #15803d)"
+                                    : "rgba(255,255,255,0.08)",
+                                color: "white",
+                                border: robotConnected ? "none" : "1px solid rgba(255,255,255,0.1)",
+                                boxShadow: robotConnected ? "0 0 20px rgba(34,197,94,0.4)" : undefined,
+                                cursor: isRobotLoading ? "not-allowed" : "pointer",
+                                opacity: isRobotLoading ? 0.7 : 1,
+                            }}
+                        >
+                            {robotConnected
+                                ? <Wifi className="w-4 h-4" />
+                                : <Bot className={`w-4 h-4 ${isRobotLoading ? 'animate-pulse' : ''}`} />
+                            }
+                            {isRobotLoading ? "Connexion..." : robotConnected ? "Robot connecté" : "Connecter robot"}
+                        </button>
+
+                        <div className="flex items-center justify-center gap-2 pt-1" style={{
+                            fontSize: "11px",
+                            color: robotConnected ? "#4ade80" : "#4b5563",
+                        }}>
+                            <div style={{
+                                width: 8, height: 8, borderRadius: "50%",
+                                background: robotConnected ? "#22c55e" : "#374151",
+                                boxShadow: robotConnected ? "0 0 8px rgba(34,197,94,0.6)" : "none",
+                            }} />
+                            {robotConnected ? "Système en ligne" : "Système en veille"}
+                        </div>
                     </div>
                 </motion.div>
             </div>

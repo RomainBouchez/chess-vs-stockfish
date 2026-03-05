@@ -113,7 +113,9 @@ class UniversalEngine:
             return True
             
         except Exception as e:
+            import traceback
             print(f"[ERREUR] Impossible de lancer le moteur : {e}")
+            print(traceback.format_exc())
             if self.engine:
                 try:
                     self.engine.quit()

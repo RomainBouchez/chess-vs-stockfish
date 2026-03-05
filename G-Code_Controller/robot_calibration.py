@@ -107,11 +107,16 @@ class RobotCalibration:
             self.serial_conn = serial.Serial(
                 port=port,
                 baudrate=baudrate,
-                timeout=2
+                timeout=2,
+                write_timeout=2
             )
             
             time.sleep(2)  # Attendre la réinitialisation
-            
+
+            # Vider le buffer d'entrée (messages de démarrage Marlin)
+            self.serial_conn.reset_input_buffer()
+            time.sleep(0.5)
+
             # Lire le message de démarrage
             if self.serial_conn.in_waiting:
                 # Ligne corrigée
@@ -140,6 +145,8 @@ class RobotCalibration:
             return False
 
         try:
+            # Vider les buffers avant d'envoyer
+            self.serial_conn.reset_output_buffer()
             # Détecter les coordonnées négatives et utiliser le mode relatif si nécessaire
             if 'X-' in command or 'Y-' in command or 'Z-' in command:
                 # Convertir en mode relatif pour les mouvements négatifs

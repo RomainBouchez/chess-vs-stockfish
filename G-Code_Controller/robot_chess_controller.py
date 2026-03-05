@@ -128,6 +128,12 @@ class ChessRobotController:
         else:
             self.XY_SETTLE_DELAY = 1.0
 
+        # Paramètres robot
+        if 'ROBOT' in config:
+            self.USE_HOMING = config['ROBOT'].get('use_homing', 'false').lower() == 'true'
+        else:
+            self.USE_HOMING = False
+
         # Pronation (servo de rotation de la pince)
         if 'PRONATION' in config:
             self.PRONATION_ENABLED = config['PRONATION'].get('pronation_enabled', 'false').lower() == 'true'
@@ -158,6 +164,7 @@ class ChessRobotController:
         Returns:
             True si la connexion est établie, False sinon
         """
+        print(f"[ROBOT-CONNECT] Tentative d'ouverture du port série {self.port} @ {self.baudrate} bauds...", flush=True)
         try:
             self.serial_conn = serial.Serial(
                 port=self.port,
@@ -165,24 +172,31 @@ class ChessRobotController:
                 timeout=2,
                 write_timeout=2
             )
+            print(f"[ROBOT-CONNECT] Port {self.port} ouvert ✓ — attente réinitialisation Arduino (2s)...", flush=True)
             time.sleep(2)  # Attendre la réinitialisation de l'Arduino/GRBL
-            
+
             # Attendre le message de démarrage
+            print("[ROBOT-CONNECT] Lecture du message de démarrage...", flush=True)
             startup_msg = self.serial_conn.read_until(b'\n')
-            print(f"[ROBOT] Démarrage: {startup_msg.decode(errors='ignore').strip()}")
-            
+            print(f"[ROBOT-CONNECT] Démarrage firmware: '{startup_msg.decode(errors='ignore').strip()}'", flush=True)
+
             # Initialiser le robot
+            print("[ROBOT-CONNECT] Envoi des commandes d'initialisation...", flush=True)
             self.send_command("G21")  # Mode millimètres
             self.send_command("G90")  # Positionnement absolu
             self.send_command("G94")  # Vitesse en mm/min
             self.send_command(f"F{self.FEED_RATE_TRAVEL}")  # Vitesse par défaut
-            
+
             self.is_connected = True
-            print(f"[ROBOT] Connecté sur {self.port} à {self.baudrate} bauds")
+            print(f"[ROBOT-CONNECT] ✓ Connecté sur {self.port} à {self.baudrate} bauds", flush=True)
             return True
-            
+
         except serial.SerialException as e:
-            print(f"[ERREUR] Impossible de se connecter: {e}")
+            print(f"[ROBOT-CONNECT] ✗ SerialException: {e}", flush=True)
+            self.is_connected = False
+            return False
+        except Exception as e:
+            print(f"[ROBOT-CONNECT] ✗ Exception inattendue: {e}", flush=True)
             self.is_connected = False
             return False
     
@@ -205,27 +219,31 @@ class ChessRobotController:
             True si la commande est acceptée, False sinon
         """
         if not self.is_connected or not self.serial_conn:
-            print("[ERREUR] Robot non connecté")
+            print("[ROBOT-CMD] ✗ Robot non connecté — commande ignorée", flush=True)
             return False
-        
+
         try:
             # Envoyer la commande
             cmd_line = command.strip() + '\n'
             self.serial_conn.write(cmd_line.encode())
-            print(f"[ROBOT] >>> {command}")
-            
+            print(f"[ROBOT-CMD] >>> {command}", flush=True)
+
             if wait_ok:
-                # Attendre la réponse
-                while True:
+                # Attendre la réponse (max 10 tentatives × timeout série = ~20s)
+                for attempt in range(10):
                     response = self.serial_conn.readline().decode(errors='ignore').strip()
                     if response:
-                        print(f"[ROBOT] <<< {response}")
+                        print(f"[ROBOT-CMD] <<< {response}", flush=True)
                         if 'ok' in response.lower():
                             return True
                         elif 'error' in response.lower():
-                            print(f"[ERREUR] Commande rejetée: {command}")
+                            print(f"[ROBOT-CMD] ✗ Firmware a rejeté la commande: {command}", flush=True)
                             return False
-            
+                    else:
+                        print(f"[ROBOT-CMD] (tentative {attempt+1}/10 — pas de réponse)", flush=True)
+                print(f"[ROBOT-CMD] ✗ Timeout — aucune réponse 'ok' pour: {command}", flush=True)
+                return False
+
             return True
             
         except Exception as e:
@@ -282,15 +300,15 @@ class ChessRobotController:
         """
         print("[ROBOT] Initialisation de la position...")
 
-        # Étape 1: Homing physique pour trouver l'origine (0,0,0)
-        # Le robot va toucher ses capteurs de fin de course.
-        print("[ROBOT] Étape 1/2 - Lancement du Homing (G28 X Y) si vous voulez faire le homming du Z, changez ligne ""self.send_command(""G28 X Y"")")
-        self.send_command("G28 X Y")
-        #time.sleep(1) # Petite pause pour s'assurer que G28 est terminé
+        # Étape 1: Homing physique (seulement si use_homing = true dans robot_config.ini)
+        if self.USE_HOMING:
+            print("[ROBOT] Étape 1/2 - Lancement du Homing (G28 X Y)")
+            self.send_command("G28 X Y")
+        else:
+            print("[ROBOT] Homing désactivé (use_homing = false) - passage direct à la position de départ")
 
         # Étape 2: Se positionner au-dessus du coin a1 comme position de départ
-        # On s'assure d'abord que l'axe Z est à une hauteur de sécurité.
-        print(f"[ROBOT] Étape 2/2 - Déplacement vers la position de départ (coin a1)...")
+        print(f"[ROBOT] Déplacement vers la position de départ (coin a1)...")
         
         # Commande 1 : Monter l'axe Z à la hauteur de sécurité
         self.send_command(f"G0 Z{self.Z_SAFE}")

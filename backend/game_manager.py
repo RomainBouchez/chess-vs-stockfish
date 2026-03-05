@@ -96,6 +96,7 @@ class GameManager:
         self.board = chess.Board()
         self.engine = get_universal_engine()
         self.robot = None
+        self.robot_error: str | None = None
         self.enable_robot = enable_robot
         self.white_captured = []
         self.black_captured = []
@@ -116,16 +117,28 @@ class GameManager:
 
         # Initialize Robot
         if self.enable_robot and ChessRobotController:
+            print("[GAME-MANAGER] Initialisation du ChessRobotController...", flush=True)
             try:
-                self.robot = ChessRobotController(port='COM3') # Default port, consideration to make configurable needed
+                self.robot = ChessRobotController()  # Port lu depuis robot_config.ini
+                print(f"[GAME-MANAGER] Config chargée — port={self.robot.port}, baudrate={self.robot.baudrate}", flush=True)
+                print(f"[GAME-MANAGER] use_homing={self.robot.USE_HOMING}", flush=True)
+                print("[GAME-MANAGER] Appel de robot.connect()...", flush=True)
                 if self.robot.connect():
+                    print("[GAME-MANAGER] robot.connect() → True, appel de home_robot()...", flush=True)
                     self.robot.home_robot()
+                    print("[GAME-MANAGER] home_robot() terminé — robot prêt", flush=True)
                 else:
+                    self.robot_error = f"connect() a retourné False sur {self.robot.port} à {self.robot.baudrate} bauds"
                     self.robot = None
-                    print("[WARNING] Robot connection failed.")
+                    print(f"[GAME-MANAGER] ✗ {self.robot_error}", flush=True)
             except Exception as e:
-                print(f"[ERROR] Robot initialization failed: {e}")
+                self.robot_error = str(e)
+                print(f"[GAME-MANAGER] ✗ Exception: {e}", flush=True)
+                import traceback; traceback.print_exc()
                 self.robot = None
+        elif self.enable_robot and not ChessRobotController:
+            self.robot_error = "ChessRobotController n'a pas pu être importé"
+            print(f"[GAME-MANAGER] ✗ {self.robot_error}", flush=True)
 
     def reset_game(self):
         self.board.reset()

@@ -11,6 +11,7 @@ class PlayerSlot:
         self.connected: bool = True
         self.disconnect_time: Optional[float] = None
         self.ready: bool = False
+        self.join_time: float = time.time()
 
 
 class SessionManager:
@@ -171,6 +172,7 @@ class SessionManager:
                 opponent = self._opponent_slot(color)
                 return {
                     "type": "pvp_waiting",
+                    "color": color,
                     "opponent_sid": opponent.sid if opponent else None,
                 }
 
@@ -226,3 +228,61 @@ class SessionManager:
 
     def remove_from_queue(self, sid: str):
         self.queue = [qs for qs in self.queue if qs.sid != sid]
+
+    def promote_next_in_queue(self, color: str) -> Optional[dict]:
+        """Promote the first queued player of the given color to their seat if free.
+        Returns {sid, color} if promoted, None otherwise."""
+        if self._get_slot(color) is not None:
+            return None  # seat already taken
+        for i, qs in enumerate(self.queue):
+            if qs.color == color:
+                self._set_slot(color, qs)
+                qs.ready = False
+                self.queue.pop(i)
+                return {"sid": qs.sid, "color": qs.color}
+        return None
+
+    def reorder_queue(self, sid: str, direction: str) -> bool:
+        """Move a queued player up or down. Returns True if moved."""
+        idx = next((i for i, qs in enumerate(self.queue) if qs.sid == sid), None)
+        if idx is None:
+            return False
+        if direction == "up" and idx > 0:
+            self.queue[idx], self.queue[idx - 1] = self.queue[idx - 1], self.queue[idx]
+            return True
+        if direction == "down" and idx < len(self.queue) - 1:
+            self.queue[idx], self.queue[idx + 1] = self.queue[idx + 1], self.queue[idx]
+            return True
+        return False
+
+    def get_admin_state(self) -> dict:
+        """Return full session state for the admin dashboard."""
+        now = time.time()
+
+        def slot_info(slot: Optional["PlayerSlot"]) -> Optional[dict]:
+            if slot is None:
+                return None
+            return {
+                "sid": slot.sid,
+                "color": slot.color,
+                "connected": slot.connected,
+                "ready": slot.ready,
+                "wait_seconds": int(now - slot.join_time),
+                "disconnect_seconds": int(now - slot.disconnect_time) if slot.disconnect_time else None,
+            }
+
+        return {
+            "game_in_progress": self.game_in_progress,
+            "white_player": slot_info(self.white_player),
+            "black_player": slot_info(self.black_player),
+            "queue": [
+                {
+                    "sid": qs.sid,
+                    "color": qs.color,
+                    "position": i + 1,
+                    "wait_seconds": int(now - qs.join_time),
+                }
+                for i, qs in enumerate(self.queue)
+            ],
+            "pve_count": len(self.pve_sids),
+        }

@@ -44,6 +44,8 @@ export default function Home() {
     const [capturedBlack, setCapturedBlack] = useState<string[]>([]);
     const [gameStatus, setGameStatus] = useState<string>("Ready");
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
+    const [possibleMoves, setPossibleMoves] = useState<string[]>([]);
 
     useEffect(() => {
         function onGameState(state: GameState) {
@@ -51,6 +53,8 @@ export default function Home() {
             setFen(state.fen);
             const newGame = new Chess(state.fen);
             setGame(newGame);
+            setSelectedSquare(null);
+            setPossibleMoves([]);
             setCapturedWhite(state.white_captured);
             setCapturedBlack(state.black_captured);
 
@@ -77,21 +81,73 @@ export default function Home() {
         };
     }, []);
 
+    const makeMove = useCallback((from: string, to: string) => {
+        try {
+            const gameCopy = new Chess(game.fen());
+            const move = gameCopy.move({ from, to, promotion: "q" });
+            if (move === null) return;
+            const uci = move.from + move.to + (move.promotion ? move.promotion : "");
+            socket.emit("make_move", { uci });
+            setSelectedSquare(null);
+            setPossibleMoves([]);
+        } catch { /* ignore */ }
+    }, [game]);
+
+    const handleSquareClick = useCallback(({ square }: { piece: unknown; square: string }) => {
+        if (game.turn() !== 'w') return;
+
+        if (!selectedSquare) {
+            const piece = game.get(square as Parameters<typeof game.get>[0]);
+            if (piece && piece.color === 'w') {
+                setSelectedSquare(square);
+                const moves = game.moves({ square: square as Parameters<typeof game.moves>[0] extends { square?: infer S } ? S : never, verbose: true }) as { to: string }[];
+                setPossibleMoves(moves.map(m => m.to));
+            }
+        } else {
+            if (square === selectedSquare) {
+                setSelectedSquare(null);
+                setPossibleMoves([]);
+            } else if (possibleMoves.includes(square)) {
+                makeMove(selectedSquare, square);
+            } else {
+                const piece = game.get(square as Parameters<typeof game.get>[0]);
+                if (piece && piece.color === 'w') {
+                    setSelectedSquare(square);
+                    const moves = game.moves({ square: square as Parameters<typeof game.moves>[0] extends { square?: infer S } ? S : never, verbose: true }) as { to: string }[];
+                    setPossibleMoves(moves.map(m => m.to));
+                } else {
+                    setSelectedSquare(null);
+                    setPossibleMoves([]);
+                }
+            }
+        }
+    }, [game, selectedSquare, possibleMoves, makeMove]);
+
+    const getSquareStyles = useCallback(() => {
+        const styles: Record<string, object> = {};
+        if (selectedSquare) {
+            styles[selectedSquare] = { backgroundColor: 'rgba(59, 130, 246, 0.5)', boxShadow: 'inset 0 0 0 3px rgba(59, 130, 246, 0.8)' };
+        }
+        possibleMoves.forEach(sq => {
+            const piece = game.get(sq as Parameters<typeof game.get>[0]);
+            styles[sq] = piece
+                ? { backgroundColor: 'rgba(239, 68, 68, 0.5)', boxShadow: 'inset 0 0 0 3px rgba(239, 68, 68, 0.8)' }
+                : { backgroundColor: 'rgba(34, 197, 94, 0.5)', boxShadow: 'inset 0 0 0 3px rgba(34, 197, 94, 0.8)' };
+        });
+        return styles;
+    }, [selectedSquare, possibleMoves, game]);
+
     const onDrop = useCallback(({ sourceSquare, targetSquare }: { piece: unknown, sourceSquare: string, targetSquare: string | null }) => {
         if (!targetSquare) return false;
         try {
-            const move = game.move({
-                from: sourceSquare,
-                to: targetSquare,
-                promotion: "q",
-            });
-
+            const gameCopy = new Chess(game.fen());
+            const move = gameCopy.move({ from: sourceSquare, to: targetSquare, promotion: "q" });
             if (move === null) return false;
-
             const uci = move.from + move.to + (move.promotion ? move.promotion : "");
             socket.emit("make_move", { uci });
+            setSelectedSquare(null);
+            setPossibleMoves([]);
             return true;
-
         } catch {
             return false;
         }
@@ -211,8 +267,13 @@ export default function Home() {
                                 ? `${BACKEND_API}/api/robot/disconnect`
                                 : `${BACKEND_API}/api/robot/connect`;
                             const res = await fetch(endpoint, { method: "POST" });
-                            if (res.ok) setRobotConnected(!robotConnected);
-                        } catch (e) { console.error(e); }
+                            if (res.ok) {
+                                setRobotConnected(!robotConnected);
+                            } else {
+                                const data = await res.json().catch(() => ({}));
+                                alert(`Connexion robot échouée :\n${data?.detail || `Erreur HTTP ${res.status}`}`);
+                            }
+                        } catch (e) { alert(`Connexion robot échouée :\n${e}`); console.error(e); }
                     }}
                     className={`mobile-toolbar-btn ${robotConnected ? 'mobile-toolbar-btn-active' : ''}`}
                     title="Robot"
@@ -268,10 +329,12 @@ export default function Home() {
                             options={{
                                 position: fen,
                                 onPieceDrop: onDrop,
+                                onSquareClick: handleSquareClick,
                                 boardOrientation: "white",
                                 darkSquareStyle: { backgroundColor: "#4a5568" },
                                 lightSquareStyle: { backgroundColor: "#a0aec0" },
                                 animationDurationInMs: 300,
+                                squareStyles: getSquareStyles(),
                             }}
                         />
                     </div>
