@@ -1,44 +1,18 @@
 "use client";
 
-import { useState, CSSProperties } from "react";
-import { Settings, RefreshCw, Bot, Gamepad2, Wifi } from "lucide-react";
+import { CSSProperties } from "react";
+import { Settings, RefreshCw, Bot, Gamepad2, Wifi, Home } from "lucide-react";
 import { Button, Card } from "@/components/ui";
 import { motion } from "framer-motion";
-import { BACKEND_API } from "@/lib/socket";
 
 interface GameControlsProps {
     onReset: () => void;
     onOpenSettings: () => void;
+    onHoming: () => void;
     robotConnected: boolean;
-    onRobotConnectionChange?: (connected: boolean) => void;
 }
 
-export default function GameControls({ onReset, onOpenSettings, robotConnected, onRobotConnectionChange }: GameControlsProps) {
-    const [isRobotLoading, setIsRobotLoading] = useState(false);
-
-    const toggleRobot = async () => {
-        setIsRobotLoading(true);
-        try {
-            const endpoint = robotConnected
-                ? `${BACKEND_API}/api/robot/disconnect`
-                : `${BACKEND_API}/api/robot/connect`;
-            const res = await fetch(endpoint, { method: "POST" });
-            if (res.ok) {
-                onRobotConnectionChange?.(!robotConnected);
-            } else {
-                const data = await res.json().catch(() => ({}));
-                const msg = data?.detail || `Erreur HTTP ${res.status}`;
-                alert(`Connexion robot échouée :\n${msg}`);
-                console.error("[Robot]", msg);
-            }
-        } catch (e) {
-            alert(`Connexion robot échouée :\n${e}`);
-            console.error(e);
-        } finally {
-            setIsRobotLoading(false);
-        }
-    };
-
+export default function GameControls({ onReset, onOpenSettings, onHoming, robotConnected }: GameControlsProps) {
     const headerStyle: CSSProperties = {
         display: "flex",
         alignItems: "center",
@@ -117,6 +91,18 @@ export default function GameControls({ onReset, onOpenSettings, robotConnected, 
         boxShadow: robotConnected ? "0 0 10px rgba(34, 197, 94, 0.6)" : "none",
     };
 
+    const robotIndicatorStyle: CSSProperties = {
+        display: "flex",
+        alignItems: "center",
+        gap: "12px",
+        padding: "12px 16px",
+        borderRadius: "12px",
+        border: `1px solid ${robotConnected ? "rgba(34, 197, 94, 0.3)" : "rgba(255, 255, 255, 0.06)"}`,
+        background: robotConnected ? "rgba(34, 197, 94, 0.08)" : "rgba(255, 255, 255, 0.03)",
+        transition: "all 0.5s",
+        cursor: "default",
+    };
+
     return (
         <Card variant="elevated" style={{ overflow: "hidden" }}>
             {/* Header */}
@@ -162,47 +148,51 @@ export default function GameControls({ onReset, onOpenSettings, robotConnected, 
                     </div>
                 </div>
 
-                {/* Robot Connection Button */}
-                <motion.div
-                    animate={robotConnected ? { scale: [1, 1.02, 1] } : {}}
-                    transition={{ duration: 0.3 }}
-                >
-                    <Button
-                        onClick={toggleRobot}
-                        isLoading={isRobotLoading}
-                        variant={robotConnected ? "success" : "secondary"}
-                        size="lg"
-                        leftIcon={
-                            robotConnected
-                                ? <Wifi style={{ width: 20, height: 20 }} />
-                                : <Bot style={{ width: 20, height: 20 }} />
+                {/* Robot Status + Homing */}
+                <div style={{ display: "flex", gap: "8px", alignItems: "stretch" }}>
+                    <motion.div
+                        animate={robotConnected ? { scale: [1, 1.02, 1] } : {}}
+                        transition={{ duration: 0.3 }}
+                        style={{ ...robotIndicatorStyle, flex: 1 }}
+                    >
+                        <motion.div
+                            animate={robotConnected ? { scale: [1, 1.15, 1], opacity: [1, 0.7, 1] } : {}}
+                            transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                            style={statusDotStyle}
+                        />
+                        {robotConnected
+                            ? <Wifi style={{ width: 18, height: 18, color: "#4ade80" }} />
+                            : <Bot style={{ width: 18, height: 18, color: "#4b5563" }} />
                         }
+                        <span style={{ fontSize: "14px", fontWeight: 600, color: robotConnected ? "#4ade80" : "#4b5563" }}>
+                            {robotConnected ? "Robot Connected" : "Robot Offline"}
+                        </span>
+                    </motion.div>
+                    <Button
+                        onClick={onHoming}
+                        variant="secondary"
+                        size="lg"
+                        disabled={!robotConnected}
                         style={{
-                            width: "100%",
-                            boxShadow: robotConnected ? "0 0 20px rgba(34, 197, 94, 0.4)" : undefined,
+                            padding: "0 14px",
+                            opacity: robotConnected ? 1 : 0.4,
+                            cursor: robotConnected ? "pointer" : "not-allowed",
                         }}
                     >
-                        {robotConnected ? "Robot Connected" : "Connect Robot"}
+                        <Home style={{ width: 18, height: 18 }} />
                     </Button>
-                </motion.div>
+                </div>
             </div>
 
-            {/* Status Indicator */}
+            {/* Status Footer */}
             <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 style={statusContainerStyle}
             >
                 <motion.div
-                    animate={robotConnected ? {
-                        scale: [1, 1.2, 1],
-                        opacity: [1, 0.7, 1]
-                    } : {}}
-                    transition={{
-                        duration: 2,
-                        repeat: Infinity,
-                        ease: "easeInOut"
-                    }}
+                    animate={robotConnected ? { scale: [1, 1.2, 1], opacity: [1, 0.7, 1] } : {}}
+                    transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
                     style={statusDotStyle}
                 />
                 <span style={{ textTransform: "uppercase", letterSpacing: "0.1em" }}>

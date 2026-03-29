@@ -82,7 +82,13 @@ class ChessRobotController:
 
         # Charger les paramètres série (écrase les valeurs passées au constructeur)
         if 'SERIAL' in config:
-            self.port = config['SERIAL'].get('port', self.port)
+            import platform as _platform
+            if _platform.system().lower() == "windows":
+                self.port = config['SERIAL'].get('port_windows',
+                            config['SERIAL'].get('port', self.port))
+            else:
+                self.port = config['SERIAL'].get('port_linux',
+                            config['SERIAL'].get('port', self.port))
             self.baudrate = int(config['SERIAL'].get('baudrate', self.baudrate))
             print(f"[CONFIG] Port série: {self.port} à {self.baudrate} bauds")
 
@@ -207,30 +213,43 @@ class ChessRobotController:
             self.is_connected = False
             print("[ROBOT] Déconnecté")
     
-    def send_command(self, command: str, wait_ok: bool = True) -> bool:
+    def _recover_from_halt(self):
+        """Envoie M999 pour sortir le firmware d'un état halted (après kill())."""
+        import time
+        print("[ROBOT] Firmware halté — envoi de M999 pour récupération...", flush=True)
+        try:
+            self.serial_conn.write(b"M999\n")
+            time.sleep(5)  # Laisser le firmware redémarrer complètement
+            self.serial_conn.reset_input_buffer()  # Vider tous les messages de démarrage
+            print("[ROBOT] M999 envoyé — firmware récupéré.", flush=True)
+        except Exception as e:
+            print(f"[ROBOT] Erreur lors de la récupération M999: {e}", flush=True)
+
+    def send_command(self, command: str, wait_ok: bool = True, timeout: float = 120.0) -> bool:
         """
         Envoie une commande G-code au robot.
-        
+
         Args:
             command: Commande G-code à envoyer
             wait_ok: Attendre la réponse 'ok' du robot
-            
+            timeout: Durée maximale d'attente en secondes (défaut 120s)
+
         Returns:
             True si la commande est acceptée, False sinon
         """
+        import time
         if not self.is_connected or not self.serial_conn:
             print("[ROBOT-CMD] ✗ Robot non connecté — commande ignorée", flush=True)
             return False
 
         try:
-            # Envoyer la commande
             cmd_line = command.strip() + '\n'
             self.serial_conn.write(cmd_line.encode())
             print(f"[ROBOT-CMD] >>> {command}", flush=True)
 
             if wait_ok:
-                # Attendre la réponse (max 10 tentatives × timeout série = ~20s)
-                for attempt in range(10):
+                deadline = time.time() + timeout
+                while time.time() < deadline:
                     response = self.serial_conn.readline().decode(errors='ignore').strip()
                     if response:
                         print(f"[ROBOT-CMD] <<< {response}", flush=True)
@@ -238,14 +257,18 @@ class ChessRobotController:
                             return True
                         elif 'error' in response.lower():
                             print(f"[ROBOT-CMD] ✗ Firmware a rejeté la commande: {command}", flush=True)
+                            if 'halted' in response.lower() or 'kill' in response.lower():
+                                self._recover_from_halt()
                             return False
+                        # echo:busy: processing → continuer à attendre sans consommer le timeout
                     else:
-                        print(f"[ROBOT-CMD] (tentative {attempt+1}/10 — pas de réponse)", flush=True)
-                print(f"[ROBOT-CMD] ✗ Timeout — aucune réponse 'ok' pour: {command}", flush=True)
+                        remaining = int(deadline - time.time())
+                        print(f"[ROBOT-CMD] (pas de réponse — {remaining}s restantes)", flush=True)
+                print(f"[ROBOT-CMD] ✗ Timeout ({timeout}s) — aucune réponse 'ok' pour: {command}", flush=True)
                 return False
 
             return True
-            
+
         except Exception as e:
             print(f"[ERREUR] Envoi commande: {e}")
             return False

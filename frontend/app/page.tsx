@@ -9,9 +9,9 @@ import { Chess } from "chess.js";
 import { socket, BACKEND_API } from "@/lib/socket";
 import GameControls from "@/components/GameControls";
 import SettingsModal from "@/components/SettingsModal";
-import { Trophy, Users, Shield, Swords, Crown, Lightbulb, RefreshCw, Settings, Bot } from "lucide-react";
+import { Trophy, Users, Shield, Swords, Crown, Lightbulb, RefreshCw, Settings, Bot, Home as HomeIcon } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Card } from "@/components/ui";
+import { Card, Modal, Button } from "@/components/ui";
 import RobotDebugPanel from "@/components/RobotDebugPanel"; // DEBUG - remove after testing
 
 
@@ -44,6 +44,8 @@ export default function Home() {
     const [capturedBlack, setCapturedBlack] = useState<string[]>([]);
     const [gameStatus, setGameStatus] = useState<string>("Ready");
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const [showResetMessage, setShowResetMessage] = useState(false);
+    const [isHoming, setIsHoming] = useState(false);
     const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
     const [possibleMoves, setPossibleMoves] = useState<string[]>([]);
 
@@ -64,7 +66,12 @@ export default function Home() {
             else setGameStatus(`${state.turn === 'white' ? "White" : "Black"}'s Turn`);
         }
 
+        function onRobotStatus(data: { connected: boolean }) {
+            setRobotConnected(data.connected);
+        }
+
         socket.on("game_state", onGameState);
+        socket.on("robot_status", onRobotStatus);
         socket.on("connect", () => {
             console.log("Socket connected");
             socket.emit("join_pve", {});
@@ -75,8 +82,15 @@ export default function Home() {
             socket.emit("join_pve", {});
         }
 
+        // Fetch initial robot status
+        fetch(`${BACKEND_API}/api/robot/status`)
+            .then(r => r.json())
+            .then(data => setRobotConnected(data.connected))
+            .catch(() => { });
+
         return () => {
             socket.off("game_state", onGameState);
+            socket.off("robot_status", onRobotStatus);
             socket.off("connect");
         };
     }, []);
@@ -154,10 +168,22 @@ export default function Home() {
     }, [game]);
 
     const handleReset = async () => {
+        setShowResetMessage(true);
+        setIsHoming(true);
         try {
             await fetch(`${BACKEND_API}/api/game/reset`, { method: "POST" });
         } catch (e) {
             console.error("Failed to reset", e);
+        } finally {
+            setIsHoming(false);
+        }
+    };
+
+    const handleHoming = async () => {
+        try {
+            await fetch(`${BACKEND_API}/api/robot/home`, { method: "POST" });
+        } catch (e) {
+            console.error("Failed to home robot", e);
         }
     };
 
@@ -260,26 +286,24 @@ export default function Home() {
                     <span className="text-[10px] font-medium">Settings</span>
                 </button>
 
-                <button
-                    onClick={async () => {
-                        try {
-                            const endpoint = robotConnected
-                                ? `${BACKEND_API}/api/robot/disconnect`
-                                : `${BACKEND_API}/api/robot/connect`;
-                            const res = await fetch(endpoint, { method: "POST" });
-                            if (res.ok) {
-                                setRobotConnected(!robotConnected);
-                            } else {
-                                const data = await res.json().catch(() => ({}));
-                                alert(`Connexion robot échouée :\n${data?.detail || `Erreur HTTP ${res.status}`}`);
-                            }
-                        } catch (e) { alert(`Connexion robot échouée :\n${e}`); console.error(e); }
-                    }}
+                <div
                     className={`mobile-toolbar-btn ${robotConnected ? 'mobile-toolbar-btn-active' : ''}`}
-                    title="Robot"
+                    title={robotConnected ? "Robot connecté" : "Robot hors ligne"}
+                    style={{ cursor: "default" }}
                 >
                     <Bot className={`w-5 h-5 ${robotConnected ? 'text-green-400' : ''}`} />
-                    <span className="text-[10px] font-medium">{robotConnected ? 'Online' : 'Robot'}</span>
+                    <span className="text-[10px] font-medium">{robotConnected ? 'Online' : 'Offline'}</span>
+                </div>
+
+                <button
+                    onClick={handleHoming}
+                    disabled={!robotConnected}
+                    className="mobile-toolbar-btn"
+                    title="Homing (G28)"
+                    style={{ opacity: robotConnected ? 1 : 0.4, cursor: robotConnected ? "pointer" : "not-allowed" }}
+                >
+                    <HomeIcon className="w-5 h-5" />
+                    <span className="text-[10px] font-medium">Home</span>
                 </button>
             </motion.div>
 
@@ -379,8 +403,8 @@ export default function Home() {
                     <GameControls
                         onReset={handleReset}
                         robotConnected={robotConnected}
-                        onRobotConnectionChange={setRobotConnected}
                         onOpenSettings={() => setIsSettingsOpen(true)}
+                        onHoming={handleHoming}
                     />
 
                     {/* Tips Card */}
@@ -401,6 +425,33 @@ export default function Home() {
                     </Card>
                 </motion.div>
             </div>
+
+            {/* Reset Message Modal */}
+            <Modal
+                isOpen={showResetMessage}
+                onClose={() => setShowResetMessage(false)}
+                size="sm"
+                title={
+                    <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                        <div style={{ width: 36, height: 36, borderRadius: "10px", background: "linear-gradient(to bottom right, #f59e0b, #ea580c)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                            <RefreshCw style={{ width: 18, height: 18, color: "white" }} />
+                        </div>
+                        <div>
+                            <h2 style={{ fontSize: "18px", fontWeight: "bold" }}>Nouvelle partie</h2>
+                            <p style={{ fontSize: "12px", color: "#6b7280" }}>Remise en place du plateau</p>
+                        </div>
+                    </div>
+                }
+                footer={
+                    <Button variant="primary" onClick={() => setShowResetMessage(false)} disabled={isHoming} isLoading={isHoming}>
+                        C&apos;est fait
+                    </Button>
+                }
+            >
+                <p style={{ fontSize: "14px", color: "#9ca3af", lineHeight: 1.6 }}>
+                    Veuillez remettre les pièces à leur bonne place avant de commencer une nouvelle partie.
+                </p>
+            </Modal>
 
             {/* Settings Modal */}
             <SettingsModal

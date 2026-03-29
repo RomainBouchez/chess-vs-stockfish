@@ -3,6 +3,7 @@ import os
 import asyncio
 import socketio
 import uvicorn
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -28,8 +29,46 @@ class ReorderRequest(BaseModel):
     sid: str
     direction: str  # "up" or "down"
 
+ROBOT_RETRY_INTERVAL = 10  # secondes entre chaque tentative de reconnexion
+
+# -- Game & Session State (initialisé avant lifespan) --
+game = GameManager(enable_robot=False)
+session = SessionManager()
+
+# -- Socket.IO Setup --
+sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
+
+
+async def _auto_connect_robot():
+    """Tente de connecter le robot au démarrage, puis réessaie toutes les N secondes."""
+    global game
+    await asyncio.sleep(2)  # Laisser le serveur démarrer proprement
+    while True:
+        if game.robot is None:
+            print("[AUTO-ROBOT] Tentative de connexion au robot...", flush=True)
+            try:
+                candidate = GameManager(enable_robot=True)
+                if candidate.robot is not None:
+                    game = candidate
+                    print("[AUTO-ROBOT] Robot connecté !", flush=True)
+                    await sio.emit('robot_status', {"connected": True})
+                else:
+                    print(f"[AUTO-ROBOT] Échec : {candidate.robot_error}", flush=True)
+                    await sio.emit('robot_status', {"connected": False, "error": candidate.robot_error})
+            except Exception as e:
+                print(f"[AUTO-ROBOT] Exception : {e}", flush=True)
+        await asyncio.sleep(ROBOT_RETRY_INTERVAL)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(_auto_connect_robot())
+    yield
+    task.cancel()
+
+
 # -- FastAPI Setup --
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
 # CORS: allow all origins for LAN/network access
 app.add_middleware(
@@ -40,13 +79,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# -- Socket.IO Setup --
-sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
 socket_app = socketio.ASGIApp(sio, app)
-
-# -- Game & Session State --
-game = GameManager(enable_robot=False)
-session = SessionManager()
 
 # ============================================================
 # REST API Endpoints
@@ -61,31 +94,23 @@ async def reset_game():
     # Only allow reset in PvE mode (PvP resets through session flow)
     if session.is_pvp_active():
         raise HTTPException(status_code=400, detail="Cannot reset during PvP game")
+    # Send homing command before resetting
+    if game.robot is not None:
+        game.robot.send_command("G28 X Y")
     state = game.reset_game()
     await sio.emit('game_state', state)
     return state
 
-@app.post("/api/robot/connect")
-def connect_robot():
-    global game
-    print("\n" + "="*50, flush=True)
-    print("[ROBOT-API] POST /api/robot/connect reçu", flush=True)
-    print("="*50, flush=True)
-    game = GameManager(enable_robot=True)
-    if game.robot is not None:
-        print("[ROBOT-API] ✓ Connexion réussie — robot prêt", flush=True)
-        return {"status": "success", "message": "Robot connecté"}
-    else:
-        error = game.robot_error or "Erreur inconnue"
-        print(f"[ROBOT-API] ✗ Connexion échouée : {error}", flush=True)
-        raise HTTPException(status_code=503, detail=f"Connexion échouée : {error}")
+@app.get("/api/robot/status")
+def robot_status():
+    return {"connected": game.robot is not None, "error": game.robot_error}
 
-@app.post("/api/robot/disconnect")
-def disconnect_robot():
-    global game
-    game.disconnect()
-    game = GameManager(enable_robot=False)
-    return {"status": "success", "message": "Robot disconnected"}
+@app.post("/api/robot/home")
+def robot_home():
+    if game.robot is None:
+        raise HTTPException(status_code=503, detail="Robot not connected")
+    success = game.robot.send_command("G28 X Y")
+    return {"success": success}
 
 @app.get("/api/settings")
 def get_settings():
@@ -223,6 +248,14 @@ async def player_ready(sid, data=None):
     """Player presses the Ready button."""
     result = session.mark_ready(sid)
     if result["can_start"]:
+        # Notify both players that homing is starting
+        if session.white_player:
+            await sio.emit('homing_start', {}, to=session.white_player.sid)
+        if session.black_player:
+            await sio.emit('homing_start', {}, to=session.black_player.sid)
+        # Run G28 homing in a thread to avoid blocking the event loop
+        if game.robot is not None:
+            await asyncio.to_thread(game.robot.send_command, "G28 X Y")
         # Reset the board for a fresh game
         state = game.reset_game()
         # Notify both players

@@ -4,6 +4,7 @@ import requests
 import zipfile
 import platform
 import shutil
+import subprocess
 from urllib.parse import urlparse
 from pathlib import Path
 
@@ -110,11 +111,35 @@ class EngineManager:
         if system == "windows":
             return "windows"
         elif system == "linux":
-            return "linux" 
+            return "linux"
         elif system == "darwin":
             return "mac"
         else:
             return "linux"  # Par défaut
+
+    def is_arm(self):
+        """Détecte si on est sur une architecture ARM (ex: Raspberry Pi)"""
+        machine = platform.machine().lower()
+        return machine in ("aarch64", "armv7l", "armv6l", "arm64")
+
+    def _register_system_stockfish(self, engine_id):
+        """Enregistre le Stockfish installé via apt comme moteur valide"""
+        path = shutil.which("stockfish")
+        if not path:
+            raise Exception(
+                "Stockfish introuvable. Installez-le avec : sudo apt install stockfish"
+            )
+        print(f"Stockfish système trouvé : {path}")
+        engine_config = self.available_engines[engine_id]
+        self.installed_engines[engine_id] = {
+            "name": engine_config["name"],
+            "version": "system",
+            "path": path,
+            "installed_date": "system",
+        }
+        self.save_installed_engines()
+        print("Stockfish système enregistré avec succès.")
+        return True
             
     def load_installed_engines(self):
         """Charge la liste des moteurs installés"""
@@ -160,10 +185,16 @@ class EngineManager:
         """Télécharge et installe un moteur"""
         if engine_id not in self.available_engines:
             raise ValueError(f"Moteur {engine_id} non disponible")
-            
+
         if self.is_engine_installed(engine_id):
             raise ValueError(f"Moteur {engine_id} déjà installé")
-            
+
+        # Sur ARM (Raspberry Pi), les binaires x86 ne fonctionnent pas.
+        # On utilise le Stockfish installé via apt.
+        if self.is_arm():
+            print("Architecture ARM détectée (Raspberry Pi). Utilisation du Stockfish système.")
+            return self._register_system_stockfish(engine_id)
+
         engine_config = self.available_engines[engine_id]
         platform_name = self.get_platform()
         

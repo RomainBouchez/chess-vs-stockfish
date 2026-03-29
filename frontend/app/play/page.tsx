@@ -8,8 +8,9 @@ const Chessboard = dynamic(() => import("react-chessboard").then((mod) => mod.Ch
 });
 import { Chess } from "chess.js";
 import { socket, BACKEND_API } from "@/lib/socket";
-import { Trophy, Users, Shield, Swords, Crown, Flag, Bot, Wifi } from "lucide-react";
+import { Trophy, Users, Shield, Swords, Crown, Flag, Bot, Wifi, RefreshCw } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { Modal, Button } from "@/components/ui";
 import {
     WaitingScreen,
     QueueScreen,
@@ -59,6 +60,8 @@ function PvPGame() {
     const [possibleMoves, setPossibleMoves] = useState<string[]>([]);
     const [robotConnected, setRobotConnected] = useState(false);
     const [isRobotLoading, setIsRobotLoading] = useState(false);
+    const [showHomingModal, setShowHomingModal] = useState(false);
+    const [isHoming, setIsHoming] = useState(false);
 
     console.log("PvPGame Render:", { phase, hasGameOverData: !!gameOverData });
 
@@ -103,9 +106,15 @@ function PvPGame() {
             });
         }
 
+        function onHomingStart() {
+            setShowHomingModal(true);
+            setIsHoming(true);
+        }
+
         function onGameStart() {
             setPhase("playing");
             setGameOverData(null);
+            setIsHoming(false);
         }
 
         function onGameState(state: GameState) {
@@ -169,6 +178,7 @@ function PvPGame() {
         }
 
         socket.on("pvp_status", onPvpStatus);
+        socket.on("homing_start", onHomingStart);
         socket.on("game_start", onGameStart);
         socket.on("game_state", onGameState);
         socket.on("opponent_disconnected", onOpponentDisconnected);
@@ -183,6 +193,7 @@ function PvPGame() {
 
         return () => {
             socket.off("pvp_status", onPvpStatus);
+            socket.off("homing_start", onHomingStart);
             socket.off("game_start", onGameStart);
             socket.off("game_state", onGameState);
             socket.off("opponent_disconnected", onOpponentDisconnected);
@@ -606,6 +617,34 @@ function PvPGame() {
                     </div>
                 </motion.div>
             </div>
+
+            {/* Homing Modal */}
+            <Modal
+                isOpen={showHomingModal}
+                onClose={() => !isHoming && setShowHomingModal(false)}
+                showCloseButton={!isHoming}
+                size="sm"
+                title={
+                    <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                        <div style={{ width: 36, height: 36, borderRadius: "10px", background: "linear-gradient(to bottom right, #f59e0b, #ea580c)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                            <RefreshCw style={{ width: 18, height: 18, color: "white" }} />
+                        </div>
+                        <div>
+                            <h2 style={{ fontSize: "18px", fontWeight: "bold" }}>Nouvelle partie</h2>
+                            <p style={{ fontSize: "12px", color: "#6b7280" }}>Remise en place du plateau</p>
+                        </div>
+                    </div>
+                }
+                footer={
+                    <Button variant="primary" onClick={() => setShowHomingModal(false)} disabled={isHoming} isLoading={isHoming}>
+                        C&apos;est fait
+                    </Button>
+                }
+            >
+                <p style={{ fontSize: "14px", color: "#9ca3af", lineHeight: 1.6 }}>
+                    Veuillez remettre les pièces à leur bonne place avant de commencer une nouvelle partie.
+                </p>
+            </Modal>
 
             {/* Overlays */}
             {phase === "opponent_disconnected" && (

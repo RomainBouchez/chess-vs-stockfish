@@ -72,7 +72,7 @@ class RobotDebugProxy(ChessRobotController):
         print(f"[DEBUG-ROBOT] GCODE >>> {z_cmd}")
 
     def home_robot(self):
-        self._debug_log.append("GCODE >>> G28 X Y  (homing)")
+        self._debug_log.append("GCODE >>> G28 (homing)")
         self._debug_log.append(f"GCODE >>> G0 Z{self.Z_SAFE}  (safe height)")
         self._debug_log.append(f"GCODE >>> G0 X{self.BOARD_OFFSET_X} Y{self.BOARD_OFFSET_Y}  (go to a1)")
         print("[DEBUG-ROBOT] home_robot() simulé")
