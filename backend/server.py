@@ -47,7 +47,7 @@ async def _auto_connect_robot():
         if game.robot is None:
             print("[AUTO-ROBOT] Tentative de connexion au robot...", flush=True)
             try:
-                candidate = GameManager(enable_robot=True)
+                candidate = await asyncio.to_thread(GameManager, enable_robot=True)
                 if candidate.robot is not None:
                     game = candidate
                     print("[AUTO-ROBOT] Robot connecté !", flush=True)
@@ -94,9 +94,11 @@ async def reset_game():
     # Only allow reset in PvE mode (PvP resets through session flow)
     if session.is_pvp_active():
         raise HTTPException(status_code=400, detail="Cannot reset during PvP game")
-    # Send homing command before resetting
+    # Send homing command before resetting (same sequence as Home button)
     if game.robot is not None:
-        game.robot.send_command("G28 X Y")
+        success = game.robot.send_command("G28 X Y")
+        if success:
+            game.robot.send_command(f"G1 Z{game.robot.Z_BUMP} F{game.robot.FEED_RATE_WORK}")
     state = game.reset_game()
     await sio.emit('game_state', state)
     return state
@@ -110,6 +112,9 @@ def robot_home():
     if game.robot is None:
         raise HTTPException(status_code=503, detail="Robot not connected")
     success = game.robot.send_command("G28 X Y")
+    if success:
+        # Bump Z into mechanical stop (no end-stop: motor stalls at top)
+        game.robot.send_command(f"G1 Z{game.robot.Z_BUMP} F{game.robot.FEED_RATE_WORK}")
     return {"success": success}
 
 @app.get("/api/settings")
@@ -304,7 +309,7 @@ async def make_move(sid, data):
             await sio.emit('game_state', game.get_state(), to=sid)
             return
 
-    success, state, debug_log = game.apply_move(move_uci)
+    success, state, debug_log = await asyncio.to_thread(game.apply_move, move_uci)
 
     # DEBUG: Emit robot debug log if any
     if debug_log:
@@ -328,7 +333,7 @@ async def make_move(sid, data):
                 best_move = game.get_best_move()
                 if best_move:
                     print(f"Stockfish plays: {best_move}")
-                    success_ai, state_ai, debug_log_ai = game.apply_move(best_move)
+                    success_ai, state_ai, debug_log_ai = await asyncio.to_thread(game.apply_move, best_move)
                     # DEBUG: Emit robot debug for Stockfish move too
                     if debug_log_ai:
                         await sio.emit('robot_debug', {"move": best_move, "commands": debug_log_ai})

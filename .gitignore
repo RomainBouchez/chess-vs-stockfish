@@ -18,6 +18,7 @@ ENV/
 *.swo
 *~
 .claude/
+claude.md
 
 # Chess engines (downloaded at runtime)
 engines/
@@ -39,3 +40,5 @@ nul
 
 
 *.txt
+
+.planning/

@@ -124,9 +124,7 @@ class GameManager:
                 print(f"[GAME-MANAGER] use_homing={self.robot.USE_HOMING}", flush=True)
                 print("[GAME-MANAGER] Appel de robot.connect()...", flush=True)
                 if self.robot.connect():
-                    print("[GAME-MANAGER] robot.connect() → True, appel de home_robot()...", flush=True)
-                    self.robot.home_robot()
-                    print("[GAME-MANAGER] home_robot() terminé — robot prêt", flush=True)
+                    print("[GAME-MANAGER] robot.connect() → True, robot prêt", flush=True)
                 else:
                     self.robot_error = f"connect() a retourné False sur {self.robot.port} à {self.robot.baudrate} bauds"
                     self.robot = None
@@ -145,9 +143,11 @@ class GameManager:
         self.white_captured = []
         self.black_captured = []
         if self.robot:
-            # Optional: Move robot to home or reset state?
-            # self.robot.home_robot() # Might be too slow to do every game
-            pass 
+            self.robot.init_board_state()
+            self.robot.white_capture_count = 0
+            self.robot.black_capture_count = 0
+            self.robot.capture_count = 0
+            self.robot.save_state()
         return self.get_state()
 
     def get_state(self):

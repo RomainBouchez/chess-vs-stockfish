@@ -9,10 +9,11 @@ interface GameControlsProps {
     onReset: () => void;
     onOpenSettings: () => void;
     onHoming: () => void;
+    onRecover: () => void;
     robotConnected: boolean;
 }
 
-export default function GameControls({ onReset, onOpenSettings, onHoming, robotConnected }: GameControlsProps) {
+export default function GameControls({ onReset, onOpenSettings, onHoming, onRecover, robotConnected }: GameControlsProps) {
     const headerStyle: CSSProperties = {
         display: "flex",
         alignItems: "center",
@@ -173,6 +174,7 @@ export default function GameControls({ onReset, onOpenSettings, onHoming, robotC
                         variant="secondary"
                         size="lg"
                         disabled={!robotConnected}
+                        title="Homing (G28)"
                         style={{
                             padding: "0 14px",
                             opacity: robotConnected ? 1 : 0.4,
@@ -180,6 +182,20 @@ export default function GameControls({ onReset, onOpenSettings, onHoming, robotC
                         }}
                     >
                         <Home style={{ width: 18, height: 18 }} />
+                    </Button>
+                    <Button
+                        onClick={onRecover}
+                        variant="secondary"
+                        size="lg"
+                        disabled={!robotConnected}
+                        title="Récupérer le robot bloqué (M999)"
+                        style={{
+                            padding: "0 14px",
+                            opacity: robotConnected ? 1 : 0.4,
+                            cursor: robotConnected ? "pointer" : "not-allowed",
+                        }}
+                    >
+                        <RefreshCw style={{ width: 18, height: 18 }} />
                     </Button>
                 </div>
             </div>

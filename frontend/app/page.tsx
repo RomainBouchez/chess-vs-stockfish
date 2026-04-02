@@ -187,6 +187,14 @@ export default function Home() {
         }
     };
 
+    const handleRecover = async () => {
+        try {
+            await fetch(`${BACKEND_API}/api/robot/recover`, { method: "POST" });
+        } catch (e) {
+            console.error("Failed to recover robot", e);
+        }
+    };
+
     // Status badge styling
     const getStatusStyle = () => {
         if (gameStatus.includes("Checkmate")) {
@@ -305,6 +313,17 @@ export default function Home() {
                     <HomeIcon className="w-5 h-5" />
                     <span className="text-[10px] font-medium">Home</span>
                 </button>
+
+                <button
+                    onClick={handleRecover}
+                    disabled={!robotConnected}
+                    className="mobile-toolbar-btn"
+                    title="Récupérer le robot (M999)"
+                    style={{ opacity: robotConnected ? 1 : 0.4, cursor: robotConnected ? "pointer" : "not-allowed" }}
+                >
+                    <RefreshCw className="w-5 h-5" />
+                    <span className="text-[10px] font-medium">Recover</span>
+                </button>
             </motion.div>
 
             {/* Main Content */}
@@ -405,6 +424,7 @@ export default function Home() {
                         robotConnected={robotConnected}
                         onOpenSettings={() => setIsSettingsOpen(true)}
                         onHoming={handleHoming}
+                        onRecover={handleRecover}
                     />
 
                     {/* Tips Card */}

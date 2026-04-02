@@ -60,7 +60,7 @@ class ChessRobotController:
                 'board_offset_y': '20.0'
             }
             config['HEIGHTS'] = {
-                'z_safe': '50.0',
+                'z_safe': '70.0',
                 'z_grab': '5.0',
                 'z_lift': '30.0'
             }
@@ -74,8 +74,8 @@ class ChessRobotController:
                 'feed_rate_work': '1500'
             }
             config['GRIPPER'] = {
-                'grab_command': 'M3 S1000',
-                'release_command': 'M5',
+                'grab_command': 'M280 P0 S20',
+                'release_command': 'M280 P0 S0',
                 'grab_delay': '0.5',
                 'release_delay': '0.5'
             }
@@ -101,6 +101,7 @@ class ChessRobotController:
         self.Z_SAFE = float(config['HEIGHTS']['z_safe'])
         self.Z_GRAB = float(config['HEIGHTS']['z_grab'])
         self.Z_LIFT = float(config['HEIGHTS']['z_lift'])
+        self.Z_BUMP = float(config['HEIGHTS'].get('z_bump', '80.0'))
 
         # Zone de capture
         self.CAPTURE_ZONE_X = float(config['CAPTURE_ZONE']['capture_x'])
@@ -116,6 +117,7 @@ class ChessRobotController:
         self.RELEASE_COMMAND = config['GRIPPER']['release_command']
         self.GRAB_DELAY = float(config['GRIPPER']['grab_delay'])
         self.RELEASE_DELAY = float(config['GRIPPER']['release_delay'])
+        self.GRIP_SETTLE_DELAY = float(config['GRIPPER'].get('grip_settle_delay', '1.5'))
 
         # Axe Z (servo)
         if 'Z_AXIS' in config:
@@ -130,9 +132,9 @@ class ChessRobotController:
 
         # Paramètres avancés
         if 'ADVANCED' in config:
-            self.XY_SETTLE_DELAY = float(config['ADVANCED'].get('xy_settle_delay', '1.0'))
+            self.XY_SETTLE_DELAY = float(config['ADVANCED'].get('xy_settle_delay', '0.5'))
         else:
-            self.XY_SETTLE_DELAY = 1.0
+            self.XY_SETTLE_DELAY = 0.5
 
         # Paramètres robot
         if 'ROBOT' in config:
@@ -365,6 +367,17 @@ class ChessRobotController:
 
         return (x, y)
     
+    def _get_grab_height(self, piece_type: str) -> float:
+        """Retourne la hauteur Z de prise/dépose selon le type de pièce."""
+        return {
+            'pawn':   15.0,
+            'rook':   15.0,
+            'bishop': 20.0,
+            'knight': 20.0,
+            'queen':  25.0,
+            'king':   28.0,
+        }.get(piece_type, self.Z_GRAB)
+
     def move_z(self, z_target: float):
         """
         Déplace l'axe Z en utilisant G0 (stepper) ou les commandes configurées.
@@ -403,24 +416,25 @@ class ChessRobotController:
         else:
             self.send_command(f"G0 X{x:.2f} Y{y:.2f}")
 
-        # IMPORTANT: Attendre que les axes XY atteignent leur position
-        # avant de bouger l'axe Z (évite que la pince descende en vol)
-        print(f"[WAIT] Attente stabilisation XY ({self.XY_SETTLE_DELAY}s)...")
-        time.sleep(self.XY_SETTLE_DELAY)
-
-        # Déplacer Z avec M280
+        # Déplacer Z
         self.move_z(z)
+
+        # Attendre que Z atteigne sa position avant toute action (grab/release)
+        print(f"[WAIT] Attente stabilisation Z ({self.XY_SETTLE_DELAY}s)...")
+        time.sleep(self.XY_SETTLE_DELAY)
     
     def grab_piece(self):
         """
         Active le mécanisme de préhension (électro-aimant ou pince).
         Utilise la commande configurée dans robot_config.ini
         """
+        time.sleep(self.GRIP_SETTLE_DELAY)  # Attendre que Z atteigne sa position
         self.send_command(self.GRAB_COMMAND)
         time.sleep(self.GRAB_DELAY)
 
     def release_piece(self):
         """Désactive le mécanisme de préhension."""
+        time.sleep(self.GRIP_SETTLE_DELAY)  # Attendre que Z atteigne sa position
         self.send_command(self.RELEASE_COMMAND)
         time.sleep(self.RELEASE_DELAY)
 
@@ -472,12 +486,13 @@ class ChessRobotController:
         king_from_x, king_from_y = self.uci_to_coordinates(king_from)
         king_to_x, king_to_y = self.uci_to_coordinates(king_to)
 
+        z_king = self._get_grab_height('king')
         self.move_to_position(king_from_x, king_from_y, self.Z_SAFE, self.FEED_RATE_TRAVEL)
-        self.move_to_position(king_from_x, king_from_y, self.Z_GRAB, self.FEED_RATE_WORK)
+        self.move_to_position(king_from_x, king_from_y, z_king, self.FEED_RATE_WORK)
         self.grab_piece()
         self.move_to_position(king_from_x, king_from_y, self.Z_LIFT, self.FEED_RATE_WORK)
         self.move_to_position(king_to_x, king_to_y, self.Z_LIFT, self.FEED_RATE_TRAVEL)
-        self.move_to_position(king_to_x, king_to_y, self.Z_GRAB, self.FEED_RATE_WORK)
+        self.move_to_position(king_to_x, king_to_y, z_king, self.FEED_RATE_WORK)
         self.release_piece()
         self.move_to_position(king_to_x, king_to_y, self.Z_SAFE, self.FEED_RATE_WORK)
 
@@ -486,12 +501,13 @@ class ChessRobotController:
         rook_from_x, rook_from_y = self.uci_to_coordinates(rook_from)
         rook_to_x, rook_to_y = self.uci_to_coordinates(rook_to)
 
+        z_rook = self._get_grab_height('rook')
         self.move_to_position(rook_from_x, rook_from_y, self.Z_SAFE, self.FEED_RATE_TRAVEL)
-        self.move_to_position(rook_from_x, rook_from_y, self.Z_GRAB, self.FEED_RATE_WORK)
+        self.move_to_position(rook_from_x, rook_from_y, z_rook, self.FEED_RATE_WORK)
         self.grab_piece()
         self.move_to_position(rook_from_x, rook_from_y, self.Z_LIFT, self.FEED_RATE_WORK)
         self.move_to_position(rook_to_x, rook_to_y, self.Z_LIFT, self.FEED_RATE_TRAVEL)
-        self.move_to_position(rook_to_x, rook_to_y, self.Z_GRAB, self.FEED_RATE_WORK)
+        self.move_to_position(rook_to_x, rook_to_y, z_rook, self.FEED_RATE_WORK)
         self.release_piece()
         self.move_to_position(rook_to_x, rook_to_y, self.Z_SAFE, self.FEED_RATE_WORK)
 
@@ -550,7 +566,7 @@ class ChessRobotController:
 
         # Vérifier si c'est un pion
         piece_data = self.board_state.get(from_square)
-        if piece_data is None:
+        if piece_data is None or piece_data.get('type') != 'pawn':
             return None
 
         # Prise en passant : mouvement diagonal d'un pion vers une case vide
@@ -635,11 +651,16 @@ class ChessRobotController:
 
         print(f"[ROBOT] [ACTION] Déplacement de la pièce de {from_square} à {to_square}.")
 
+        # Hauteur de prise/dépose adaptée au type de pièce
+        piece_data = self.board_state.get(from_square, {})
+        z_grab = self._get_grab_height(piece_data.get('type', ''))
+        print(f"[ROBOT] Hauteur prise/dépose pour {piece_data.get('type', '?')}: Z={z_grab}mm")
+
         # Séquence "Pick and Place"
         # 1. Aller au-dessus de la pièce source
         self.move_to_position(from_x, from_y, self.Z_SAFE, self.FEED_RATE_TRAVEL)
         # 2. Descendre pour attraper
-        self.move_to_position(from_x, from_y, self.Z_GRAB, self.FEED_RATE_WORK)
+        self.move_to_position(from_x, from_y, z_grab, self.FEED_RATE_WORK)
         # 3. Activer la préhension
         self.grab_piece()
         # 4. Remonter avec la pièce
@@ -647,7 +668,7 @@ class ChessRobotController:
         # 5. Se déplacer vers la destination
         self.move_to_position(to_x, to_y, self.Z_LIFT, self.FEED_RATE_TRAVEL)
         # 6. Descendre pour déposer
-        self.move_to_position(to_x, to_y, self.Z_GRAB, self.FEED_RATE_WORK)
+        self.move_to_position(to_x, to_y, z_grab, self.FEED_RATE_WORK)
         # 7. Relâcher la pièce
         self.release_piece()
         # 8. Remonter à une hauteur de sécurité
@@ -662,89 +683,54 @@ class ChessRobotController:
         """
         Calcule la position de la zone de capture pour une pièce.
 
-        Disposition (vue de dessus, blancs en bas) :
+        Disposition (vue de dessus, A1 en bas-gauche = origine du robot) :
 
-            [N 2x4]  [  PLATEAU  ]  [N 2x4]    <- côté noir (rangs 7-8)
+                     [  PLATEAU  ]  [B col0][B col1]   <- pièces BLANCHES (côté rangs 1-4, X bas)
                      [           ]
                      [           ]
-            [B 2x4]  [  PLATEAU  ]  [B 2x4]    <- côté blanc (rangs 1-2)
+                     [  PLATEAU  ]  [N col0][N col1]   <- pièces NOIRES (côté rangs 5-8, X haut)
 
-        - Pièces BLANCHES capturées : zones côté blanc (X bas), gauche puis droite
-        - Pièces NOIRES capturées : zones côté noir (X haut), gauche puis droite
-        - Chaque zone : 2 colonnes (Y) × 4 rangées (X) = 8 cases
+        Toutes les captures sont placées à DROITE du plateau (Y > fin du plateau).
+        Le côté gauche (Y < 0) est inaccessible car A1 = (0, 0).
+
+        - Pièces BLANCHES : 2 colonnes à droite, alignées sur les rangs 1-8 depuis le bas
+        - Pièces NOIRES   : 2 colonnes à droite, alignées sur les rangs 8-1 depuis le haut
+        - Chaque groupe : 2 colonnes (Y) × 8 rangées (X) = 16 cases max
         - Espacement : même que SQUARE_SIZE
         """
-        # Charger l'état si disponible pour ne pas écraser les pièces précédentes après redémarrage
         self.load_state()
 
-        spacing = self.SQUARE_SIZE  # Même espacement que le plateau
-        board_size = self.SQUARE_SIZE * 8
+        spacing = self.SQUARE_SIZE
+        board_right_edge = self.BOARD_OFFSET_Y + (8 * spacing)
+        # Première colonne centrée à spacing/2 après le bord droit du plateau
+        col0_y = board_right_edge + (spacing / 2)
 
         if is_white_piece:
-            # Pièces BLANCHES capturées : côté blanc du plateau (rangs 1-2, X bas)
             count = self.white_capture_count
+            col = count % 2   # colonne 0 ou 1 (vers la droite)
+            row = count // 2  # rangée 0-7 (vers le haut, depuis rang 1)
 
-            # Zone gauche (0-7) puis zone droite (8-15)
-            if count < 8:
-                # Zone GAUCHE : Y < plateau, X aligné sur rangs 1-4
-                zone = "gauche"
-                local_index = count
-                # 2 colonnes (Y) × 4 rangées (X)
-                col = local_index % 2  # 0 ou 1 (colonne Y)
-                row = local_index // 2  # 0 à 3 (rangée X)
-
-                # Position : à gauche du plateau
-                capture_y = self.BOARD_OFFSET_Y - spacing - (col * spacing)
-                capture_x = self.BOARD_OFFSET_X + (row * spacing) + (spacing / 2)
-            else:
-                # Zone DROITE : Y > plateau, X aligné sur rangs 1-4
-                zone = "droite"
-                local_index = count - 8
-                col = local_index % 2
-                row = local_index // 2
-
-                # Position : à droite du plateau
-                capture_y = self.BOARD_OFFSET_Y + board_size + (col * spacing)
-                capture_x = self.BOARD_OFFSET_X + (row * spacing) + (spacing / 2)
+            capture_y = col0_y + (col * spacing)
+            capture_x = self.BOARD_OFFSET_X + (row * spacing) + (spacing / 2)
 
             self.white_capture_count += 1
             self.save_state()
-            print(f"[CAPTURE] Pièce BLANCHE #{count+1} -> zone {zone} ({capture_x:.1f}, {capture_y:.1f})")
+            print(f"[CAPTURE] Pièce BLANCHE #{count+1} -> col{col} row{row} ({capture_x:.1f}, {capture_y:.1f})")
 
         else:
-            # Pièces NOIRES capturées : côté noir du plateau (rangs 7-8, X haut)
             count = self.black_capture_count
+            col = count % 2
+            row = count // 2  # rangée 0-7 (vers le bas, depuis rang 8)
 
-            # Zone gauche (0-7) puis zone droite (8-15)
-            if count < 8:
-                # Zone GAUCHE : Y < plateau, X aligné sur rangs 5-8
-                zone = "gauche"
-                local_index = count
-                col = local_index % 2
-                row = local_index // 2
-
-                # Position : à gauche du plateau, côté haut (rangs 5-8)
-                capture_y = self.BOARD_OFFSET_Y - spacing - (col * spacing)
-                capture_x = self.BOARD_OFFSET_X + board_size - (row * spacing) - (spacing / 2)
-            else:
-                # Zone DROITE : Y > plateau, X aligné sur rangs 5-8
-                zone = "droite"
-                local_index = count - 8
-                col = local_index % 2
-                row = local_index // 2
-
-                # Position : à droite du plateau, côté haut
-                capture_y = self.BOARD_OFFSET_Y + board_size + (col * spacing)
-                capture_x = self.BOARD_OFFSET_X + board_size - (row * spacing) - (spacing / 2)
+            capture_y = col0_y + (col * spacing)
+            capture_x = self.BOARD_OFFSET_X + (7 - row) * spacing + (spacing / 2)
 
             self.black_capture_count += 1
             self.save_state()
-            print(f"[CAPTURE] Pièce NOIRE #{count+1} -> zone {zone} ({capture_x:.1f}, {capture_y:.1f})")
+            print(f"[CAPTURE] Pièce NOIRE #{count+1} -> col{col} row{row} ({capture_x:.1f}, {capture_y:.1f})")
 
-        # Vérification des coordonnées négatives
         if capture_x < 0 or capture_y < 0:
             print(f"[WARNING] Coordonnée négative détectée! ({capture_x:.1f}, {capture_y:.1f})")
-            print(f"[WARNING] Vérifiez board_offset_x/y dans robot_config.ini (min recommandé: {2*spacing:.1f}mm)")
 
         return (capture_x, capture_y)
 
@@ -807,15 +793,20 @@ class ChessRobotController:
 
         print(f"[ROBOT] Déplacement pièce capturée vers zone ({capture_x:.1f}, {capture_y:.1f})")
 
+        # Hauteur de prise adaptée au type de pièce capturée
+        piece_type = captured_piece_data.get('type', '') if captured_piece_data else ''
+        z_grab = self._get_grab_height(piece_type)
+        print(f"[ROBOT] Hauteur prise capture pour {piece_type or '?'}: Z={z_grab}mm")
+
         # Aller chercher la pièce
         self.move_to_position(x, y, self.Z_SAFE, self.FEED_RATE_TRAVEL)
-        self.move_to_position(x, y, self.Z_GRAB, self.FEED_RATE_WORK)
+        self.move_to_position(x, y, z_grab, self.FEED_RATE_WORK)
         self.grab_piece()
         self.move_to_position(x, y, self.Z_LIFT, self.FEED_RATE_WORK)
 
         # Déplacer vers la zone de capture
         self.move_to_position(capture_x, capture_y, self.Z_LIFT, self.FEED_RATE_TRAVEL)
-        self.move_to_position(capture_x, capture_y, self.Z_GRAB, self.FEED_RATE_WORK)
+        self.move_to_position(capture_x, capture_y, z_grab, self.FEED_RATE_WORK)
         self.release_piece()
         self.move_to_position(capture_x, capture_y, self.Z_SAFE, self.FEED_RATE_WORK)
 
