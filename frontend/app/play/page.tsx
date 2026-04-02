@@ -8,7 +8,7 @@ const Chessboard = dynamic(() => import("react-chessboard").then((mod) => mod.Ch
 });
 import { Chess } from "chess.js";
 import { socket, BACKEND_API } from "@/lib/socket";
-import { Trophy, Users, Shield, Swords, Crown, Flag, Bot, Wifi, RefreshCw } from "lucide-react";
+import { Trophy, Users, Shield, Swords, Crown, Flag, Bot, Wifi, RefreshCw, Home as HomeIcon } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Modal, Button } from "@/components/ui";
 import {
@@ -312,6 +312,14 @@ function PvPGame() {
     };
 
 
+    const handleRobotHome = async () => {
+        try {
+            await fetch(`${BACKEND_API}/api/robot/home`, { method: "POST" });
+        } catch (e) {
+            console.error("Failed to home robot", e);
+        }
+    };
+
     const handleGameEndTimerComplete = () => {
         setPhase("connecting");
         setGameOverData(null);
@@ -454,17 +462,27 @@ function PvPGame() {
                     <span className="text-[10px] font-medium">Abandonner</span>
                 </button>
 
-                <button
-                    onClick={toggleRobot}
-                    disabled={isRobotLoading}
+                <div
                     className={`mobile-toolbar-btn ${robotConnected ? 'mobile-toolbar-btn-active' : ''}`}
-                    title="Robot"
+                    title={robotConnected ? "Robot connecté" : "Robot hors ligne"}
+                    style={{ cursor: "default" }}
                 >
                     {robotConnected
                         ? <Wifi className="w-5 h-5 text-green-400" />
-                        : <Bot className={`w-5 h-5 ${isRobotLoading ? 'animate-pulse' : ''}`} />
+                        : <Bot className="w-5 h-5" />
                     }
-                    <span className="text-[10px] font-medium">{robotConnected ? 'Online' : 'Robot'}</span>
+                    <span className="text-[10px] font-medium">{robotConnected ? 'Online' : 'Offline'}</span>
+                </div>
+
+                <button
+                    onClick={handleRobotHome}
+                    disabled={!robotConnected}
+                    className="mobile-toolbar-btn"
+                    title="Homing (G28)"
+                    style={{ opacity: robotConnected ? 1 : 0.4, cursor: robotConnected ? "pointer" : "not-allowed" }}
+                >
+                    <HomeIcon className="w-5 h-5" />
+                    <span className="text-[10px] font-medium">Home</span>
                 </button>
             </motion.div>
 
@@ -582,38 +600,85 @@ function PvPGame() {
                         </button>
 
                         <button
-                            onClick={toggleRobot}
-                            disabled={isRobotLoading}
+                            onClick={handleRobotHome}
+                            disabled={!robotConnected}
                             className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-semibold transition-all"
                             style={{
-                                background: robotConnected
-                                    ? "linear-gradient(to right, #16a34a, #15803d)"
-                                    : "rgba(255,255,255,0.08)",
+                                background: "rgba(255,255,255,0.08)",
                                 color: "white",
-                                border: robotConnected ? "none" : "1px solid rgba(255,255,255,0.1)",
-                                boxShadow: robotConnected ? "0 0 20px rgba(34,197,94,0.4)" : undefined,
-                                cursor: isRobotLoading ? "not-allowed" : "pointer",
-                                opacity: isRobotLoading ? 0.7 : 1,
+                                border: "1px solid rgba(255,255,255,0.1)",
+                                opacity: robotConnected ? 1 : 0.4,
+                                cursor: robotConnected ? "pointer" : "not-allowed",
                             }}
                         >
-                            {robotConnected
-                                ? <Wifi className="w-4 h-4" />
-                                : <Bot className={`w-4 h-4 ${isRobotLoading ? 'animate-pulse' : ''}`} />
-                            }
-                            {isRobotLoading ? "Connexion..." : robotConnected ? "Robot connecté" : "Connecter robot"}
+                            <HomeIcon className="w-4 h-4" />
+                            Homing robot
                         </button>
 
-                        <div className="flex items-center justify-center gap-2 pt-1" style={{
-                            fontSize: "11px",
-                            color: robotConnected ? "#4ade80" : "#4b5563",
-                        }}>
-                            <div style={{
-                                width: 8, height: 8, borderRadius: "50%",
-                                background: robotConnected ? "#22c55e" : "#374151",
-                                boxShadow: robotConnected ? "0 0 8px rgba(34,197,94,0.6)" : "none",
-                            }} />
-                            {robotConnected ? "Système en ligne" : "Système en veille"}
-                        </div>
+                        <motion.div
+                            animate={robotConnected ? { scale: [1, 1.02, 1] } : {}}
+                            transition={{ duration: 0.3 }}
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "12px",
+                                padding: "12px 16px",
+                                borderRadius: "12px",
+                                border: `1px solid ${robotConnected ? "rgba(34, 197, 94, 0.3)" : "rgba(255, 255, 255, 0.06)"}`,
+                                background: robotConnected ? "rgba(34, 197, 94, 0.08)" : "rgba(255, 255, 255, 0.03)",
+                                transition: "all 0.5s",
+                                cursor: "default",
+                            }}
+                        >
+                            <motion.div
+                                animate={robotConnected ? { scale: [1, 1.15, 1], opacity: [1, 0.7, 1] } : {}}
+                                transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                                style={{
+                                    width: 10, height: 10, borderRadius: "9999px",
+                                    background: robotConnected ? "#22c55e" : "#374151",
+                                    boxShadow: robotConnected ? "0 0 10px rgba(34, 197, 94, 0.6)" : "none",
+                                    flexShrink: 0,
+                                }}
+                            />
+                            {robotConnected
+                                ? <Wifi style={{ width: 18, height: 18, color: "#4ade80", flexShrink: 0 }} />
+                                : <Bot style={{ width: 18, height: 18, color: "#4b5563", flexShrink: 0 }} />
+                            }
+                            <span style={{ fontSize: "14px", fontWeight: 600, color: robotConnected ? "#4ade80" : "#4b5563" }}>
+                                {robotConnected ? "Robot connecté" : "Robot hors ligne"}
+                            </span>
+                        </motion.div>
+
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            style={{
+                                paddingTop: "12px",
+                                borderTop: "1px solid rgba(255, 255, 255, 0.05)",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                gap: "10px",
+                                fontSize: "12px",
+                                fontWeight: 500,
+                                transition: "color 0.5s",
+                                color: robotConnected ? "#4ade80" : "#4b5563",
+                            }}
+                        >
+                            <motion.div
+                                animate={robotConnected ? { scale: [1, 1.2, 1], opacity: [1, 0.7, 1] } : {}}
+                                transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                                style={{
+                                    width: 10, height: 10, borderRadius: "9999px",
+                                    background: robotConnected ? "#22c55e" : "#374151",
+                                    boxShadow: robotConnected ? "0 0 10px rgba(34, 197, 94, 0.6)" : "none",
+                                }}
+                            />
+                            <span style={{ textTransform: "uppercase", letterSpacing: "0.1em" }}>
+                                {robotConnected ? "Système en ligne" : "Système en veille"}
+                            </span>
+                            {robotConnected && <Wifi style={{ width: 14, height: 14, color: "#22c55e" }} />}
+                        </motion.div>
                     </div>
                 </motion.div>
             </div>
